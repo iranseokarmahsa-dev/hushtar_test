@@ -1,0 +1,5 @@
+{% extends "base.html" %}
+{% block title %}ورود | هوشیار{% endblock %}
+{% block content %}
+<section class="login-wrap"><div class="login-intro"><p class="eyebrow">فضای پژوهش خصوصی</p><h1>ورود به هوشیار</h1><p class="lede">دسترسی به پروژه‌ها و داده‌های مصاحبه فقط برای مدیر سامانه مجاز است.</p></div><form class="panel form-stack login-form" action="/auth/login" method="post"><label>نام کاربری<input name="username" autocomplete="username" required></label><label>گذرواژه<input name="password" type="password" autocomplete="current-password" required></label>{% if error %}<p class="alert alert-error">نام کاربری یا گذرواژه صحیح نیست.</p>{% endif %}<button class="button button-primary" type="submit">ورود</button></form></section>
+{% endblock %}

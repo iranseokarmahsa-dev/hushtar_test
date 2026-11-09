@@ -1,0 +1,92 @@
+{% extends "base.html" %}
+{% block title %}مدل پارادایمی | هوشیار{% endblock %}
+{% block content %}
+{% if diagram %}
+<div class="breadcrumbs"><a href="/projects">پروژه‌ها</a><span>/</span><a href="/results/{{ project.project_id }}/interview-analysis">تحلیل مستقل مصاحبه</a><span>/</span><span>نمودار پارادایمی</span></div>
+<header class="analysis-page-header paradigm-page-header">
+	<div><p class="eyebrow">مرحلهٔ سوم · نظریه‌پردازی داده‌بنیاد</p><h1>نمودار پارادایمی مصاحبه</h1><p class="lede">{{ project.title }} · نمودار از تحلیل ذخیره‌شده ساخته شده و اجرای دوبارهٔ تحلیل هوش مصنوعی در کار نیست.</p></div>
+	<div class="paradigm-page-actions">
+		<a class="button button-secondary" href="/results/{{ project.project_id }}/interview-analysis">بازگشت به تحلیل مستقل</a>
+		<button class="button button-secondary" type="button" data-zoom="out" aria-label="کوچک‌نمایی نمودار">−</button>
+		<button class="button button-secondary" type="button" data-zoom="fit">نمایش کامل</button>
+		<button class="button button-secondary" type="button" data-zoom="in" aria-label="بزرگ‌نمایی نمودار">+</button>
+		<a class="button button-secondary" href="/results/{{ project.project_id }}/paradigm/export/png">دریافت PNG</a>
+		<a class="button button-secondary" href="/results/{{ project.project_id }}/paradigm/export/svg">دریافت SVG</a>
+		<button class="button button-secondary" type="button" data-print>چاپ / PDF</button>
+	</div>
+</header>
+<nav class="analysis-steps" aria-label="مراحل تحلیل">
+	<a class="analysis-step is-complete" href="/results/{{ project.project_id }}/concept-review"><span aria-hidden="true">✓</span><b>۱</b> بازبینی مفاهیم</a>
+	<a class="analysis-step is-complete" href="/results/{{ project.project_id }}/interview-analysis"><span aria-hidden="true">✓</span><b>۲</b> تحلیل مستقل مصاحبه</a>
+	<span class="analysis-step is-active" aria-current="step"><span aria-hidden="true">●</span><b>۳</b> نمودار پارادایمی</span>
+</nav>
+{% if diagram_needs_update %}
+<section class="paradigm-refresh-notice" role="status">
+	<div><strong>{% if request.query_params.get('rebuilt') %}نمودار با آخرین داده‌های ذخیره‌شده به‌روز شد.{% else %}نمودار نیازمند به‌روزرسانی است.{% endif %}</strong><p>برای ثبت نسخهٔ هماهنگ با آخرین ویرایش تحلیل مستقل، نمودار را بازسازی کنید. بازسازی بدون اجرای تحلیل هوش مصنوعی انجام می‌شود.</p></div>
+	<form action="/results/{{ project.project_id }}/paradigm/rebuild" method="post"><button class="button button-primary" type="submit">بازسازی نمودار</button></form>
+</section>
+{% else %}
+<p class="paradigm-current-status" role="status">{% if request.query_params.get('rebuilt') %}نمودار با آخرین داده‌های ذخیره‌شده به‌روز شد.{% else %}نمودار با آخرین تحلیل ذخیره‌شده هماهنگ است.{% endif %}</p>
+{% endif %}
+<section class="paradigm-workspace">
+	<div class="paradigm-viewport" id="paradigm-viewport" aria-label="نمای نمودار پارادایمی؛ برای مشاهده جزئیات روی هر کادر کلیک کنید">
+		<div class="paradigm-zoom-content" id="paradigm-zoom-content">
+			<div class="paradigm-canvas" id="paradigm-canvas">
+				<svg class="paradigm-links" id="paradigm-links" aria-hidden="true">
+					<defs><marker id="paradigm-arrow" markerWidth="10" markerHeight="8" refX="8" refY="4" orient="auto"><path d="M0,0 L9,4 L0,8 Z" fill="context-stroke"></path></marker></defs>
+				</svg>
+				{% for node in diagram.nodes %}
+				<button type="button" class="paradigm-node paradigm-node-{{ node.id }}" id="paradigm-node-{{ node.id }}" data-node-id="{{ node.id }}" aria-pressed="false">
+					<span class="paradigm-node-heading"><span class="paradigm-node-index">۰{{ loop.index }}</span><strong>{{ node.label }}</strong></span>
+					{% if node["items"] %}
+					<span class="paradigm-node-items">
+						{% for item in node["items"] %}
+						<span class="paradigm-node-item">
+							<strong>{{ item.title }}</strong>
+							{% if item.description %}<small>{{ item.description }}</small>{% endif %}
+							{% if item.category_ids %}<small class="diagram-ids">مقوله‌ها: {{ item.category_ids|join('، ') }}</small>{% endif %}
+						</span>
+						{% endfor %}
+					</span>
+					{% else %}<span class="paradigm-node-empty">در تحلیل ثبت نشده</span>{% endif %}
+					<span class="paradigm-node-hint">برای مشاهده شواهد کلیک کنید</span>
+				</button>
+				{% endfor %}
+			</div>
+		</div>
+	</div>
+	<aside class="paradigm-detail-panel panel" id="paradigm-detail" aria-live="polite">
+		<p class="eyebrow">جزئیات مؤلفه</p><h2>برای مشاهده جزئیات، یک کادر را انتخاب کنید</h2>
+		<p class="muted">مقوله‌ها، مفاهیم پشتیبان، شناسه‌ها و شواهد در این بخش نمایش داده می‌شوند.</p>
+	</aside>
+</section>
+<div class="paradigm-legend" aria-label="راهنمای نمودار">
+	<span><i class="legend-line legend-solid"></i> پیوندهای ساختاری مدل پارادایمی</span>
+</div>
+<p class="paradigm-export-status" id="paradigm-export-status" role="status" aria-live="polite"></p>
+{% if diagram.relationships %}
+<section class="paradigm-relationship-list panel">
+	<div class="dashboard-section-heading"><div><p class="eyebrow">شواهد پیوندها</p><h2>روابط ثبت‌شده در تحلیل مستقل</h2></div><span class="count-tag">{{ diagram.relationships|length }} رابطه</span></div>
+	<div class="paradigm-relationships">
+		{% for relation in diagram.relationships %}
+		<details class="paradigm-relationship {% if not relation.documented %}is-suggested{% endif %}">
+			<summary><span class="entity-id">{{ relation.relationship_id }}</span><strong>{{ relation.source_category_id }} ← {{ relation.target_category_id }}</strong><span class="status-pill">{% if relation.documented %}مستند{% else %}نیازمند بررسی{% endif %}</span><span>{{ relation.description }}</span></summary>
+			<div class="paradigm-relationship-details">
+				<p>نوع رابطه: {{ relation.relationship_type }} · مفاهیم: {{ relation.supporting_concept_ids|join('، ') if relation.supporting_concept_ids else 'ثبت نشده' }}</p>
+				{% for evidence in relation.evidence %}<blockquote>{{ evidence.paragraph_id }} «{{ evidence.exact_quote }}»<small>{{ evidence.interpretation }}</small></blockquote>{% else %}<p class="muted">برای این رابطه شاهد مستقیمی ثبت نشده است.</p>{% endfor %}
+			</div>
+		</details>
+		{% endfor %}
+	</div>
+</section>
+{% endif %}
+<script type="application/json" id="paradigm-data">{{ diagram|tojson }}</script>
+{% else %}
+<div class="breadcrumbs"><a href="/results/{{ project.project_id }}">نتایج</a><span>/</span><span>مدل پارادایمی</span></div>
+<section class="page-heading"><div><p class="eyebrow">اشتراوس و کوربین</p><h1>مدل پارادایمی</h1><p class="lede">بخش‌ها بر اساس تحلیل ثبت‌شده نمایش داده می‌شوند؛ موارد بدون شاهد خالی می‌مانند.</p></div></section>
+{% set model = analysis.paradigm_model %}
+{% set sections = [('causal_conditions','شرایط علّی','cause'),('central_phenomenon','پدیده محوری','phenomenon'),('contextual_conditions','شرایط زمینه‌ای','context'),('intervening_conditions','شرایط مداخله‌گر','intervening'),('action_interaction_strategies','راهبردهای کنش و تعامل','strategy'),('consequences','پیامدها','consequence')] %}
+<div class="paradigm-grid">{% for key,label,kind in sections %}{% set items = model.get(key, []) %}{% if items is mapping %}{% set items = [items] %}{% endif %}<section class="paradigm-block paradigm-{{ kind }}"><div class="paradigm-label"><span>{{ "%02d"|format(loop.index) }}</span><h2>{{ label }}</h2></div>{% for item in items %}{% if item is mapping %}<article><h3>{{ item.title or item.category_name or item.name or item.category_id or label }}</h3>{% if item.definition %}<p>{{ item.definition }}</p>{% endif %}{% if item.concept_ids %}<small>مفاهیم: {{ item.concept_ids|join('، ') }}</small>{% endif %}</article>{% else %}<article><p>{{ item }}</p></article>{% endif %}{% else %}<p class="no-evidence">در تحلیل ثبت نشده</p>{% endfor %}</section>{% endfor %}</div>
+{% endif %}
+{% endblock %}
+{% block scripts %}{% if diagram %}<script src="/static/js/paradigm.js"></script>{% endif %}{% endblock %}

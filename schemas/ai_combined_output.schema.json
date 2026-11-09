@@ -1,0 +1,228 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Hooshyar Combined AI Output v2",
+  "type": "object",
+  "required": ["schema_version", "software", "analysis_method", "project_id", "interview_id", "analysis_status", "source_scope", "concept_reviews", "interview_analysis"],
+  "properties": {
+    "schema_version": {"const": "2.0"},
+    "software": {"const": "HOOSHYAR"},
+    "analysis_method": {"const": "Strauss_Corbin_Grounded_Theory"},
+    "project_id": {"type": "string", "minLength": 1},
+    "interview_id": {"type": "string", "minLength": 1},
+    "analysis_status": {"enum": ["complete", "incomplete"]},
+    "source_scope": {
+      "type": "object",
+      "required": ["total_paragraphs", "total_concepts_received", "total_concepts_reviewed"],
+      "properties": {
+        "total_paragraphs": {"type": "integer", "minimum": 0},
+        "total_concepts_received": {"type": "integer", "minimum": 0},
+        "total_concepts_reviewed": {"type": "integer", "minimum": 0}
+      },
+      "additionalProperties": false
+    },
+    "concept_reviews": {"$ref": "#/$defs/conceptReviews"},
+    "interview_analysis": {"$ref": "#/$defs/interviewAnalysis"}
+  },
+  "$defs": {
+    "confidence": {"type": "number", "minimum": 0, "maximum": 1},
+    "evidence": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["paragraph_id", "exact_quote", "interpretation"],
+        "properties": {
+          "paragraph_id": {"type": "string", "minLength": 1},
+          "exact_quote": {"type": "string", "minLength": 1},
+          "interpretation": {"type": "string", "minLength": 1}
+        },
+        "additionalProperties": false
+      }
+    },
+    "conceptReviews": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["concept_id", "paragraph_id", "original_concept", "suggested_concept", "concept_validity", "concept_change_required", "concept_reason", "original_code", "suggested_code", "code_evaluation", "code_reason", "evidence", "overlap", "confidence", "needs_researcher_review"],
+        "properties": {
+          "concept_id": {"type": "string", "minLength": 1},
+          "paragraph_id": {"type": "string", "minLength": 1},
+          "original_concept": {"type": "string"},
+          "suggested_concept": {"type": "string", "minLength": 1},
+          "concept_validity": {"enum": ["valid", "questionable", "unsupported"]},
+          "concept_change_required": {"type": "boolean"},
+          "concept_reason": {"type": "string"},
+          "original_code": {"type": "string"},
+          "suggested_code": {"type": "string", "minLength": 1},
+          "code_evaluation": {"enum": ["confirmed", "revise", "uncertain"]},
+          "code_reason": {"type": "string"},
+          "evidence": {"$ref": "#/$defs/evidence"},
+          "overlap": {
+            "type": "object",
+            "required": ["has_overlap", "related_concept_ids", "explanation"],
+            "properties": {
+              "has_overlap": {"type": "boolean"},
+              "related_concept_ids": {"type": "array", "items": {"type": "string"}},
+              "explanation": {"type": "string"}
+            },
+            "additionalProperties": false
+          },
+          "confidence": {"$ref": "#/$defs/confidence"},
+          "needs_researcher_review": {"type": "boolean"}
+        },
+        "additionalProperties": false
+      }
+    },
+    "subcategory": {
+      "type": "object",
+      "required": ["subcategory_id", "subcategory_name", "definition", "concept_ids", "evidence"],
+      "properties": {
+        "subcategory_id": {"type": "string", "minLength": 1},
+        "subcategory_name": {"type": "string", "minLength": 1},
+        "definition": {"type": "string"},
+        "concept_ids": {"type": "array", "items": {"type": "string"}},
+        "evidence": {"$ref": "#/$defs/evidence"}
+      },
+      "additionalProperties": false
+    },
+    "category": {
+      "type": "object",
+      "required": ["category_id", "category_name", "definition", "category_reason", "subcategories", "concept_ids", "properties", "dimensions", "evidence", "confidence", "needs_researcher_review"],
+      "properties": {
+        "category_id": {"type": "string", "minLength": 1},
+        "category_name": {"type": "string", "minLength": 1},
+        "definition": {"type": "string"},
+        "category_reason": {"type": "string"},
+        "subcategory_ids": {"type": "array", "items": {"type": "string", "minLength": 1}, "uniqueItems": true},
+        "subcategories": {"type": "array", "items": {"$ref": "#/$defs/subcategory"}},
+        "concept_ids": {"type": "array", "items": {"type": "string"}},
+        "properties": {"type": "array", "items": {"type": "object"}},
+        "dimensions": {"type": "array", "items": {"type": "object"}},
+        "evidence": {"$ref": "#/$defs/evidence"},
+        "confidence": {"$ref": "#/$defs/confidence"},
+        "needs_researcher_review": {"type": "boolean"}
+      },
+      "additionalProperties": false
+    },
+    "phenomenon": {
+      "oneOf": [
+        {"type": "null"},
+        {
+          "type": "object",
+          "required": ["identified", "category_id", "title", "definition", "selection_reason", "supporting_category_ids", "supporting_concept_ids", "evidence", "alternative_interpretations", "confidence", "needs_researcher_review"],
+          "properties": {
+            "identified": {"type": "boolean"},
+            "category_id": {"type": ["string", "null"]},
+            "title": {"type": ["string", "null"]},
+            "definition": {"type": "string"},
+            "selection_reason": {"type": "string"},
+            "supporting_category_ids": {"type": "array", "items": {"type": "string"}},
+            "supporting_concept_ids": {"type": "array", "items": {"type": "string"}},
+            "evidence": {"$ref": "#/$defs/evidence"},
+            "alternative_interpretations": {"type": "array", "items": {"type": "object"}},
+            "confidence": {"$ref": "#/$defs/confidence"},
+            "needs_researcher_review": {"type": "boolean"}
+          },
+          "additionalProperties": false
+        }
+      ]
+    },
+    "phenomenonSummary": {
+      "oneOf": [
+        {"type": "null"},
+        {
+          "type": "object",
+          "required": ["category_id", "title"],
+          "properties": {
+            "category_id": {"type": ["string", "null"]},
+            "title": {"type": ["string", "null"]}
+          },
+          "additionalProperties": false
+        }
+      ]
+    },
+    "relationship": {
+      "type": "object",
+      "required": ["relationship_id", "source_category_id", "target_category_id", "relationship_type", "description", "supporting_concept_ids", "evidence", "confidence", "needs_researcher_review"],
+      "properties": {
+        "relationship_id": {"type": "string", "minLength": 1},
+        "source_category_id": {"type": "string", "minLength": 1},
+        "target_category_id": {"type": "string", "minLength": 1},
+        "relationship_type": {"enum": ["direct", "interpretive", "hypothetical"]},
+        "description": {"type": "string"},
+        "supporting_concept_ids": {"type": "array", "items": {"type": "string"}},
+        "evidence": {"$ref": "#/$defs/evidence"},
+        "confidence": {"$ref": "#/$defs/confidence"},
+        "needs_researcher_review": {"type": "boolean"}
+      },
+      "additionalProperties": false
+    },
+    "paradigmComponent": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "category_id": {"type": "string"},
+          "category_ids": {"type": "array", "items": {"type": "string"}},
+          "concept_ids": {"type": "array", "items": {"type": "string"}},
+          "explanation": {"type": "string"},
+          "evidence": {"$ref": "#/$defs/evidence"},
+          "confidence": {"$ref": "#/$defs/confidence"}
+        }
+      }
+    },
+    "interviewAnalysis": {
+      "type": "object",
+      "required": ["categories", "central_phenomenon", "relationships", "paradigm_model", "researcher_review", "quality_audit"],
+      "properties": {
+        "categories": {"type": "array", "items": {"$ref": "#/$defs/category"}},
+        "central_phenomenon": {"$ref": "#/$defs/phenomenon"},
+        "relationships": {"type": "array", "items": {"$ref": "#/$defs/relationship"}},
+        "paradigm_model": {
+          "type": "object",
+          "required": ["causal_conditions", "central_phenomenon", "contextual_conditions", "intervening_conditions", "action_interaction_strategies", "consequences"],
+          "properties": {
+            "causal_conditions": {"$ref": "#/$defs/paradigmComponent"},
+            "central_phenomenon": {"$ref": "#/$defs/phenomenonSummary"},
+            "contextual_conditions": {"$ref": "#/$defs/paradigmComponent"},
+            "intervening_conditions": {"$ref": "#/$defs/paradigmComponent"},
+            "action_interaction_strategies": {"$ref": "#/$defs/paradigmComponent"},
+            "consequences": {"$ref": "#/$defs/paradigmComponent"}
+          },
+          "additionalProperties": false
+        },
+        "researcher_review": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["item_type", "item_id", "issue", "reason", "suggested_action"],
+            "properties": {
+              "item_type": {"enum": ["concept", "category", "relationship", "paradigm", "central_phenomenon"]},
+              "item_id": {"type": "string"},
+              "issue": {"type": "string"},
+              "reason": {"type": "string"},
+              "suggested_action": {"type": "string"}
+            },
+            "additionalProperties": false
+          }
+        },
+        "quality_audit": {
+          "type": "object",
+          "required": ["all_concepts_reviewed", "all_ids_preserved", "all_evidence_verifiable", "unsupported_relationships_detected", "contradictions_detected", "missing_data_detected", "analysis_limitations", "final_status"],
+          "properties": {
+            "all_concepts_reviewed": {"type": "boolean"},
+            "all_ids_preserved": {"type": "boolean"},
+            "all_evidence_verifiable": {"type": "boolean"},
+            "unsupported_relationships_detected": {"type": "boolean"},
+            "contradictions_detected": {"type": "boolean"},
+            "missing_data_detected": {"type": "boolean"},
+            "analysis_limitations": {"type": "array", "items": {"type": "string"}},
+            "final_status": {"enum": ["complete", "incomplete"]}
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

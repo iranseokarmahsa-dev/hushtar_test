@@ -1,0 +1,53 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Hooshyar Concept Reviews v2",
+  "type": "array",
+  "items": {
+    "type": "object",
+    "required": ["concept_id", "paragraph_id", "original_concept", "suggested_concept", "concept_validity", "concept_change_required", "concept_reason", "original_code", "suggested_code", "code_evaluation", "code_reason", "evidence", "overlap", "confidence", "needs_researcher_review"],
+    "properties": {
+      "concept_id": {"type": "string", "minLength": 1},
+      "paragraph_id": {"type": "string", "minLength": 1},
+      "original_concept": {"type": "string"},
+      "suggested_concept": {"type": "string", "minLength": 1},
+      "concept_validity": {"enum": ["valid", "questionable", "unsupported"]},
+      "concept_change_required": {"type": "boolean"},
+      "concept_reason": {"type": "string"},
+      "original_code": {"type": "string"},
+      "suggested_code": {"type": "string", "minLength": 1},
+      "code_evaluation": {"enum": ["confirmed", "revise", "uncertain"]},
+      "code_reason": {"type": "string"},
+      "evidence": {"$ref": "#/$defs/evidence"},
+      "overlap": {
+        "type": "object",
+        "required": ["has_overlap", "related_concept_ids", "explanation"],
+        "properties": {
+          "has_overlap": {"type": "boolean"},
+          "related_concept_ids": {"type": "array", "items": {"type": "string"}},
+          "explanation": {"type": "string"}
+        },
+        "additionalProperties": false
+      },
+      "confidence": {"$ref": "#/$defs/confidence"},
+      "needs_researcher_review": {"type": "boolean"}
+    },
+    "additionalProperties": false
+  },
+  "$defs": {
+    "confidence": {"type": "number", "minimum": 0, "maximum": 1},
+    "evidence": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["paragraph_id", "exact_quote", "interpretation"],
+        "properties": {
+          "paragraph_id": {"type": "string", "minLength": 1},
+          "exact_quote": {"type": "string", "minLength": 1},
+          "interpretation": {"type": "string", "minLength": 1}
+        },
+        "additionalProperties": false
+      }
+    }
+  },
+  "additionalProperties": false
+}

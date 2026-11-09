@@ -1,0 +1,108 @@
+{% extends "base.html" %}
+{% block title %}تحلیل مصاحبه | {{ project.title }}{% endblock %}
+{% block content %}
+<div class="breadcrumbs"><a href="/projects">تاریخچه</a><span>/</span><span>{{ project.title }}</span></div>
+<header class="analysis-page-header">
+	<div><p class="eyebrow">{{ project.title }}</p><h1>تحلیل مستقل مصاحبه</h1><p class="lede">نمای کلی تحلیل و پیشنهادهای قابل بازبینی پژوهشگر</p></div>
+	<a class="button button-secondary" href="/projects/{{ project.project_id }}">بازگشت به پروژه</a>
+</header>
+<nav class="analysis-steps" aria-label="مراحل تحلیل">
+	<a class="analysis-step is-complete" href="/results/{{ project.project_id }}/concept-review"><span aria-hidden="true">✓</span><b>۱</b> بازبینی مفاهیم</a>
+	<span class="analysis-step is-active" aria-current="step"><span aria-hidden="true">●</span><b>۲</b> تحلیل مستقل مصاحبه</span>
+	<a class="analysis-step" href="/results/{{ project.project_id }}/paradigm"><span aria-hidden="true">○</span><b>۳</b> نمودار پارادایمی</a>
+</nav>
+{% if request.query_params.get('saved') %}<p class="alert alert-success" role="status">اصلاحات تحلیل مصاحبه ذخیره شد.</p>{% endif %}
+{% if analysis.quality_audit.analysis_limitations %}
+<section class="analysis-notice panel" aria-label="محدودیت‌های تحلیل"><strong>محدودیت‌های تحلیل</strong><ul>{% for item in analysis.quality_audit.analysis_limitations %}<li>{{ item }}</li>{% endfor %}</ul></section>
+{% endif %}
+<form action="/results/{{ project.project_id }}/interview-analysis" method="post" class="analysis-dashboard">
+	<section class="analysis-overview">
+		<article class="phenomenon-card">
+			<div class="card-kicker"><span>هستهٔ تحلیل</span><span class="status-pill">{% if phenomenon %}اطمینان {{ (phenomenon.confidence * 100)|round|int }}٪{% else %}نیازمند بررسی{% endif %}</span></div>
+			<p class="eyebrow">پدیده محوری</p>
+			{% if phenomenon %}
+			<h2>{{ edit.get('central_phenomenon', {}).get('title', phenomenon.get('title') or 'پدیده محوری پیشنهادی') }}</h2>
+			<p class="phenomenon-definition">{{ edit.get('central_phenomenon', {}).get('definition', phenomenon.get('definition', 'تعریفی ثبت نشده است.')) }}</p>
+			{% if phenomenon.category_id %}<span class="entity-id">{{ phenomenon.category_id }}</span>{% endif %}
+			<p class="phenomenon-reason">{{ phenomenon.selection_reason }}</p>
+			<details class="evidence-disclosure"><summary>جزئیات تحلیلی پدیده</summary>
+				<div class="supporting-ids"><strong>مقوله‌های پشتیبان</strong>{% for category_id in phenomenon.supporting_category_ids or [] %}<a class="related-category" href="#category-{{ category_id }}">{{ category_id }}</a>{% else %}<small>ندارد</small>{% endfor %}</div>
+				<div class="supporting-ids"><strong>مفاهیم پشتیبان</strong>{% for concept_id in phenomenon.supporting_concept_ids or [] %}<span>{{ concept_id }}</span>{% else %}<small>ندارد</small>{% endfor %}</div>
+				{% if phenomenon.alternative_interpretations %}<h3>تفسیرهای جایگزین</h3><ul class="detail-list">{% for alternative in phenomenon.alternative_interpretations %}<li><strong>{{ alternative.title or alternative.interpretation or 'تفسیر جایگزین' }}</strong><span>{{ alternative.description or alternative.reason or alternative }}</span></li>{% endfor %}</ul>{% endif %}
+				<p class="muted">دلیل انتخاب: {{ phenomenon.selection_reason or 'ثبت نشده است.' }} · نیازمند بازبینی پژوهشگر: {{ 'بله' if phenomenon.needs_researcher_review else 'خیر' }}</p>
+			</details>
+			{% else %}<h2>پدیده محوری مشخص نشده است</h2><p class="phenomenon-definition">شواهد کافی برای تعیین پدیدهٔ محوری گزارش نشده است.</p>{% endif %}
+			<details class="edit-disclosure"><summary>ویرایش پدیده محوری</summary>
+				<label>عنوان پدیده<input name="central_phenomenon_title" value="{{ edit.get('central_phenomenon', {}).get('title', phenomenon.get('title') or '') }}"></label>
+				<label>تعریف<textarea name="central_phenomenon_definition" rows="3">{{ edit.get('central_phenomenon', {}).get('definition', phenomenon.get('definition', '')) }}</textarea></label>
+			</details>
+			{% if phenomenon and phenomenon.evidence %}<details class="evidence-disclosure"><summary>مشاهدهٔ شواهد ({{ phenomenon.evidence|length }})</summary>{% for evidence in phenomenon.evidence %}<blockquote>{{ evidence.paragraph_id }} «{{ evidence.exact_quote }}»<small>{{ evidence.interpretation }}</small></blockquote>{% endfor %}</details>{% endif %}
+		</article>
+
+		<section class="category-overview panel">
+			<div class="dashboard-section-heading"><div><p class="eyebrow">ساختار استخراج‌شده</p><h2>مقوله‌های اصلی</h2></div><span class="count-tag">{{ categories|length }} مقوله</span></div>
+			{% if categories %}<div class="category-stack">
+			{% for row in categories %}
+			<details class="category-card" id="category-{{ row.item.category_id }}">
+				<summary><span class="entity-id">{{ row.item.category_id }}</span><span class="category-summary-text"><strong>{{ row.edit.get('category_name', row.item.category_name) }}</strong><small>{{ row.item.concept_ids|length }} مفهوم پشتیبان{% if row.item.subcategories %} · {{ row.item.subcategories|length }} زیرمقوله{% endif %}</small></span><span class="category-open-label">جزئیات</span></summary>
+				<div class="category-card-content">
+					<p class="category-definition">{{ row.edit.get('definition', row.item.definition) }}</p>
+					<div class="category-metadata"><span>اطمینان {{ (row.item.confidence * 100)|round|int }}٪</span><span>بازبینی پژوهشگر: {{ 'لازم' if row.item.needs_researcher_review else 'انجام‌شده' }}</span></div>
+					<p class="muted">دلیل استخراج: {{ row.item.category_reason }}</p>
+					<div class="supporting-ids"><strong>شناسه‌های زیرمقوله</strong>{% for subcategory_id in row.item.subcategory_ids or [] %}<span>{{ subcategory_id }}</span>{% else %}<small>ندارد</small>{% endfor %}</div>
+					<div class="supporting-ids"><strong>مفاهیم پشتیبان</strong>{% for concept_id in row.item.concept_ids %}<span>{{ concept_id }}</span>{% else %}<small>مفهومی ثبت نشده است</small>{% endfor %}</div>
+					<div class="category-edit-fields">
+						<input type="hidden" name="category_ids" value="{{ row.item.category_id }}">
+						<label>عنوان مقوله<input name="category_names" value="{{ row.edit.get('category_name', row.item.category_name) }}" required></label>
+						<label>تعریف مقوله<textarea name="category_definitions" rows="3">{{ row.edit.get('definition', row.item.definition) }}</textarea></label>
+					</div>
+					{% if row.item.subcategories %}<section class="category-detail-group"><h3>زیرمقوله‌ها</h3><div class="subcategory-list">{% for subcategory in row.item.subcategories %}<article><div><span class="entity-id">{{ subcategory.subcategory_id }}</span><strong>{{ subcategory.subcategory_name }}</strong></div><p>{{ subcategory.definition }}</p><small>مفاهیم: {{ subcategory.concept_ids|join('، ') if subcategory.concept_ids else 'ندارد' }}</small>{% if subcategory.evidence %}<details class="evidence-disclosure"><summary>شواهد ({{ subcategory.evidence|length }})</summary>{% for evidence in subcategory.evidence %}<blockquote>{{ evidence.paragraph_id }} «{{ evidence.exact_quote }}»<small>{{ evidence.interpretation }}</small></blockquote>{% endfor %}</details>{% endif %}</article>{% endfor %}</div></section>{% endif %}
+					{% if row.item.properties %}<section class="category-detail-group"><h3>ویژگی‌ها</h3><ul class="detail-list">{% for property in row.item.properties %}<li><strong>{{ property.property_name }}</strong><span>{{ property.description }}</span></li>{% endfor %}</ul></section>{% endif %}
+					{% if row.item.dimensions %}<section class="category-detail-group"><h3>ابعاد</h3><ul class="detail-list">{% for dimension in row.item.dimensions %}<li><strong>{{ dimension.property_name }}</strong><span>{{ dimension.dimension_range }}</span>{% if dimension.evidence %}<details class="evidence-disclosure"><summary>شواهد ({{ dimension.evidence|length }})</summary>{% for evidence in dimension.evidence %}<blockquote>{{ evidence.paragraph_id }} «{{ evidence.exact_quote }}»<small>{{ evidence.interpretation }}</small></blockquote>{% endfor %}</details>{% endif %}</li>{% endfor %}</ul></section>{% endif %}
+					{% if row.item.evidence %}<details class="evidence-disclosure"><summary>شواهد مقوله ({{ row.item.evidence|length }})</summary>{% for evidence in row.item.evidence %}<blockquote>{{ evidence.paragraph_id }} «{{ evidence.exact_quote }}»<small>{{ evidence.interpretation }}</small></blockquote>{% endfor %}</details>{% endif %}
+				</div>
+			</details>
+			{% endfor %}</div>{% else %}<p class="empty-analysis">مقوله‌ای با شواهد کافی استخراج نشده است.</p>{% endif %}
+		</section>
+	</section>
+
+	<section class="analysis-section">
+		<div class="dashboard-section-heading"><div><p class="eyebrow">الگوی اشتراوس و کوربین</p><h2>شش مؤلفهٔ پارادایمی</h2></div></div>
+		<div class="paradigm-dashboard-grid">
+		{% for key, label in paradigm_labels %}
+		<article class="paradigm-card paradigm-{{ loop.index }}"><div class="paradigm-card-heading"><span class="paradigm-index">۰{{ loop.index }}</span><h3>{{ label }}</h3></div>
+			{% if key == 'central_phenomenon' %}
+				{% set item = analysis.paradigm_model.central_phenomenon %}
+				{% if item %}<p>{{ item.title or item.category_id or phenomenon.get('title', 'پدیده محوری') }}</p>{% if item.explanation %}<small>{{ item.explanation }}</small>{% endif %}{% if item.category_id %}<a class="related-category" href="#category-{{ item.category_id }}">{{ item.category_id }}</a>{% endif %}{% else %}<p class="muted">نامشخص</p>{% endif %}
+			{% elif analysis.paradigm_model[key] %}
+				<ul class="paradigm-items">{% for item in analysis.paradigm_model[key] %}<li>{% if item is mapping %}<strong>{{ item.title or item.category_name or item.category_id or item.explanation }}</strong>{% if item.explanation and item.explanation != item.title %}<span>{{ item.explanation }}</span>{% endif %}{% if item.category_id %}<a class="related-category" href="#category-{{ item.category_id }}">{{ item.category_id }}</a>{% endif %}{% for category_id in item.category_ids or [] %}<a class="related-category" href="#category-{{ category_id }}">{{ category_id }}</a>{% endfor %}{% for concept_id in item.concept_ids or [] %}<span class="supporting-chip">{{ concept_id }}</span>{% endfor %}{% if item.confidence is defined %}<small class="paradigm-confidence">اطمینان {{ (item.confidence * 100)|round|int }}٪</small>{% endif %}{% if item.needs_researcher_review is defined %}<small class="paradigm-confidence">بازبینی پژوهشگر: {{ 'لازم' if item.needs_researcher_review else 'انجام‌شده' }}</small>{% endif %}{% if item.evidence %}<details class="evidence-disclosure"><summary>شواهد ({{ item.evidence|length }})</summary>{% for evidence in item.evidence %}<blockquote>{{ evidence.paragraph_id }} «{{ evidence.exact_quote }}»<small>{{ evidence.interpretation }}</small></blockquote>{% endfor %}</details>{% endif %}{% else %}<span>{{ item }}</span>{% endif %}</li>{% endfor %}</ul>
+			{% else %}<p class="muted">شاهد کافی گزارش نشده است.</p>{% endif %}
+		</article>
+		{% endfor %}
+		</div>
+	</section>
+
+	<section class="analysis-section">
+		<div class="dashboard-section-heading"><div><p class="eyebrow">پیوندهای تحلیلی</p><h2>روابط بین مقوله‌ها</h2></div><span class="count-tag">{{ relationships|length }} رابطه</span></div>
+		{% if relationships %}<div class="relationship-dashboard-grid">{% for row in relationships %}
+		<article class="relationship-card"><div class="relationship-route"><span class="entity-id">{{ row.item.relationship_id }}</span><a href="#category-{{ row.item.source_category_id }}">{{ row.item.source_category_id }}</a><span aria-hidden="true">←</span><a href="#category-{{ row.item.target_category_id }}">{{ row.item.target_category_id }}</a><span class="status-pill">{{ row.item.relationship_type }}</span></div>
+			<details class="relationship-details"><summary>شرح و شواهد رابطه</summary><p>{{ row.item.description }}</p><div class="relationship-edit"><input type="hidden" name="relationship_ids" value="{{ row.item.relationship_id }}"><label>شرح قابل ویرایش<textarea name="relationship_descriptions" rows="2">{{ row.edit.get('description', row.item.description) }}</textarea></label></div><div class="relationship-metadata"><span>اطمینان {{ (row.item.confidence * 100)|round|int }}٪</span><span>بازبینی پژوهشگر: {{ 'لازم' if row.item.needs_researcher_review else 'انجام‌شده' }}</span></div><div class="supporting-ids"><strong>مفاهیم پشتیبان</strong>{% for concept_id in row.item.supporting_concept_ids %}<span>{{ concept_id }}</span>{% else %}<small>ندارد</small>{% endfor %}</div>{% if row.item.evidence %}{% for evidence in row.item.evidence %}<blockquote>{{ evidence.paragraph_id }} «{{ evidence.exact_quote }}»<small>{{ evidence.interpretation }}</small></blockquote>{% endfor %}{% endif %}</details>
+		</article>
+		{% endfor %}</div>{% else %}<p class="empty-analysis">رابطهٔ قابل استناد گزارش نشده است.</p>{% endif %}
+	</section>
+
+	<section class="analysis-section quality-section">
+		<details class="quality-details"><summary><span>کنترل کیفیت و موارد نیازمند بازبینی</span><span class="status-pill">{{ analysis.quality_audit.final_status }}</span></summary>
+			<dl class="quality-flags"><dt>همه مفاهیم بررسی شده</dt><dd>{{ 'بله' if analysis.quality_audit.all_concepts_reviewed else 'خیر' }}</dd><dt>شناسه‌ها حفظ شده‌اند</dt><dd>{{ 'بله' if analysis.quality_audit.all_ids_preserved else 'خیر' }}</dd><dt>شواهد قابل راستی‌آزمایی</dt><dd>{{ 'بله' if analysis.quality_audit.all_evidence_verifiable else 'خیر' }}</dd><dt>رابطه پشتیبانی‌نشده</dt><dd>{{ 'بله' if analysis.quality_audit.unsupported_relationships_detected else 'خیر' }}</dd><dt>تناقض شناسایی‌شده</dt><dd>{{ 'بله' if analysis.quality_audit.contradictions_detected else 'خیر' }}</dd><dt>داده ناقص</dt><dd>{{ 'بله' if analysis.quality_audit.missing_data_detected else 'خیر' }}</dd></dl>
+			{% if analysis.quality_audit.analysis_limitations %}<h3>محدودیت‌ها</h3><ul>{% for item in analysis.quality_audit.analysis_limitations %}<li>{{ item }}</li>{% endfor %}</ul>{% endif %}
+			{% if analysis.researcher_review %}<h3>موارد نیازمند تصمیم پژوهشگر</h3><div class="researcher-review-list">{% for item in analysis.researcher_review %}<article><span>{{ item.item_type }} · {{ item.item_id }}</span><strong>{{ item.issue }}</strong><p>{{ item.reason }}</p><small>{{ item.suggested_action }}</small></article>{% endfor %}</div>{% endif %}
+		</details>
+	</section>
+
+	<footer class="analysis-savebar">
+		<label class="researcher-note">یادداشت پژوهشگر<textarea name="researcher_note" rows="2">{{ edit.get('researcher_note', '') }}</textarea></label>
+		<label class="check-label"><input type="checkbox" name="confirmed" value="true" {% if edit.get('confirmed') %}checked{% endif %}> تأیید تحلیل مصاحبه</label>
+		<div class="form-actions"><button class="button button-primary" type="submit">ذخیره اصلاحات پژوهشگر</button><a class="button button-secondary" href="/results/{{ project.project_id }}/concept-review">بازبینی مفاهیم</a></div>
+	</footer>
+</form>
+{% endblock %}

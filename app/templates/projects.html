@@ -1,0 +1,13 @@
+{% extends "base.html" %}
+{% block title %}تاریخچه | نظریه‌یار{% endblock %}
+{% block content %}
+<section class="page-heading">
+	<div><p class="eyebrow">آرشیو پژوهش</p><h1>تاریخچه پروژه‌ها</h1></div>
+	<a class="button button-primary" href="/">بارگذاری مصاحبه جدید</a>
+</section>
+{% if projects %}
+<section class="panel table-panel"><div class="table-scroll"><table><thead><tr><th>عنوان</th><th>موضوع</th><th>پاراگراف</th><th>مفهوم</th><th>وضعیت</th><th></th></tr></thead><tbody>
+{% for project in projects %}<tr><td><a class="table-link" href="/projects/{{ project.project_id }}">{{ project.title }}</a><small class="table-sub">{{ project.created_at[:10] }}</small></td><td>{{ project.topic or '—' }}</td><td>{{ project.paragraphs|length }}</td><td>{{ project.concepts|length }}</td><td><span class="status-pill">{% if project.analysis %}تحلیل آماده{% elif project.paragraphs %}آماده ساخت پرامپت{% else %}بدون مصاحبه{% endif %}</span></td><td><a class="icon-link" href="/projects/{{ project.project_id }}" aria-label="بازکردن پروژه">←</a></td></tr>{% endfor %}
+</tbody></table></div></section>
+{% else %}<section class="panel empty-state"><strong>هنوز پروژه‌ای در تاریخچه نیست</strong><p>برای شروع، فایل مصاحبهٔ خود را بارگذاری کنید.</p><a class="button button-primary" href="/">بارگذاری فایل</a></section>{% endif %}
+{% endblock %}

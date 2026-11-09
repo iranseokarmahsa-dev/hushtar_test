@@ -1,0 +1,36 @@
+{% extends "base.html" %}
+{% block title %}بازبینی مفاهیم | {{ project.title }}{% endblock %}
+{% block content %}
+<div class="breadcrumbs"><a href="/projects">تاریخچه</a><span>/</span><span>{{ project.title }}</span></div>
+<section class="page-heading">
+	<div><p class="eyebrow">بخش اول تحلیل AI</p><h1>بازبینی مفاهیم پژوهشگر</h1><p class="lede">پیشنهادها را بررسی کنید؛ عنوان و کد اولیه در پاسخ خام حفظ شده‌اند.</p></div>
+	<a class="button button-secondary" href="/projects/{{ project.project_id }}">بازگشت به پروژه</a>
+</section>
+<nav class="result-tabs" aria-label="بخش‌های تحلیل">
+	<a class="is-active" href="/results/{{ project.project_id }}/concept-review">بازبینی مفاهیم</a>
+	<a href="/results/{{ project.project_id }}/interview-analysis">تحلیل مصاحبه</a>
+</nav>
+{% if request.query_params.get('saved') %}<p class="alert alert-success" role="status">اصلاحات بازبینی مفاهیم ذخیره شد.</p>{% endif %}
+{% if project.analysis.analysis_status == 'incomplete' %}<p class="alert alert-warning" role="status">خروجی برای بازبینی ذخیره شد، اما کامل نیست. پرچم‌های کنترل کیفیت و محدودیت‌ها را در صفحهٔ تحلیل مصاحبه بررسی کنید.</p>{% endif %}
+<section class="review-summary" aria-label="خلاصه بازبینی">
+	<strong>{{ reviews|length }} مفهوم</strong><span>پیشنهادها مستقل از تحلیل مصاحبه هستند.</span>
+</section>
+<form action="/results/{{ project.project_id }}/concept-review" method="post">
+	<div class="table-scroll panel review-table-wrap"><table class="review-table">
+		<thead><tr><th scope="col">شناسه و شاهد</th><th scope="col">مفهوم</th><th scope="col">کدگذاری</th><th scope="col">ارزیابی</th><th scope="col">تصمیم پژوهشگر</th></tr></thead>
+		<tbody>
+		{% for row in reviews %}
+		<tr class="review-concept-row">
+			<td><input type="hidden" name="concept_ids" value="{{ row.review.concept_id }}"><strong>{{ row.review.concept_id }}</strong><details class="review-evidence"><summary>{{ row.review.paragraph_id }} · مشاهده شاهد</summary>{% for evidence in row.review.evidence %}<blockquote>{{ evidence.paragraph_id }} «{{ evidence.exact_quote }}»<small>{{ evidence.interpretation }}</small></blockquote>{% endfor %}</details></td>
+			<td><div class="review-field-pair"><div><small class="review-field-label">عنوان اولیه</small><p class="review-original-value">{{ row.review.original_concept }}</p></div><label><span class="review-field-label">عنوان پیشنهادی · قابل ویرایش</span><input name="suggested_concepts" value="{{ row.edit.get('suggested_concept', row.review.suggested_concept) }}" aria-label="عنوان مفهوم {{ row.review.concept_id }}" required></label></div></td>
+			<td><div class="review-field-pair"><div><small class="review-field-label">کد اولیه</small><p class="review-original-value">{{ row.review.original_code }}</p></div><label><span class="review-field-label">کد پیشنهادی</span><input name="suggested_codes" list="paradigm-code-options" value="{{ row.edit.get('suggested_code', row.review.suggested_code) }}" aria-label="کد پیشنهادی {{ row.review.concept_id }}" required></label></div></td>
+			<td><span class="status-pill">{{ row.review.concept_validity }} · {{ row.review.code_evaluation }}</span><small class="table-sub">اطمینان {{ (row.review.confidence * 100)|round|int }}٪</small><details class="review-evidence"><summary>دلیل پیشنهاد</summary><p>{{ row.review.concept_reason }}</p><p>{{ row.review.code_reason }}</p></details></td>
+			<td><label class="review-note-label">یادداشت<input name="researcher_notes" value="{{ row.edit.get('researcher_note', '') }}" aria-label="یادداشت پژوهشگر {{ row.review.concept_id }}"></label><label class="check-label"><input type="checkbox" name="confirmed_concept_ids" value="{{ row.review.concept_id }}" {% if row.edit.get('confirmed') %}checked{% endif %}> تأیید پژوهشگر</label></td>
+		</tr>
+		{% else %}<tr><td colspan="5">مفهومی برای بازبینی وجود ندارد.</td></tr>{% endfor %}
+		</tbody>
+	</table></div>
+	<datalist id="paradigm-code-options"><option value="شرایط علّی"><option value="پدیده محوری"><option value="شرایط زمینه‌ای"><option value="شرایط مداخله‌گر"><option value="راهبردهای کنش و تعامل"><option value="پیامدها"><option value="نامشخص"></datalist>
+	<div class="form-actions"><button class="button button-primary" type="submit">ذخیره اصلاحات پژوهشگر</button><a class="button button-secondary" href="/results/{{ project.project_id }}/interview-analysis">ادامه به تحلیل مصاحبه</a></div>
+</form>
+{% endblock %}

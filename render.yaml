@@ -1,0 +1,25 @@
+services:
+  - type: web
+    name: hooshyar
+    runtime: python
+    buildCommand: apt-get update && apt-get install -y graphviz fonts-noto-core && pip install --upgrade pip && pip install -r requirements.txt
+    startCommand: python -m uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    disk:
+      name: hooshyar-data
+      mountPath: /opt/render/project/src/data
+      sizeGB: 1
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.9
+      - key: APP_NAME
+        value: Hooshyار
+      - key: ENVIRONMENT
+        value: production
+      - key: HOOSHYAR_DATA_DIR
+        value: /opt/render/project/src/data
+      - key: SECRET_KEY
+        generateValue: true
+      - key: ADMIN_USERNAME
+        value: admin
+      - key: ADMIN_PASSWORD
+        sync: false

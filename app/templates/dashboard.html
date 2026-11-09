@@ -1,0 +1,26 @@
+{% extends "base.html" %}
+{% block title %}بارگذاری مصاحبه | نظریه‌یار{% endblock %}
+{% block content %}
+<section class="upload-home">
+	<div class="upload-heading">
+		<p class="eyebrow">شروع تحلیل</p>
+		<h1>لطفاً فایل مصاحبه خود را آپلود کنید</h1>
+	</div>
+	<form id="interview-upload-start" class="upload-card" action="/projects" method="post" enctype="multipart/form-data" data-upload-start>
+		<input type="hidden" name="title" value="مصاحبه جدید" data-project-title>
+		<div class="upload-dropzone" data-upload-drop>
+			<input id="interview-file" class="upload-input" type="file" name="interview" accept=".docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document" required data-upload-file>
+			<label class="upload-drop-label" for="interview-file">
+				<span class="upload-symbol" aria-hidden="true">↑</span>
+				<strong>فایل خود را اینجا انتخاب کنید</strong>
+				<span class="upload-hint">یا فایل را بکشید و در این قسمت رها کنید</span>
+				<span class="upload-select">انتخاب فایل</span>
+				<span class="upload-format">فرمت مجاز: DOCX · حداکثر ۲۰ مگابایت</span>
+			</label>
+		</div>
+		<p class="selected-file" data-upload-filename hidden></p>
+		<p class="upload-status" data-upload-status role="status" aria-live="polite" hidden></p>
+		<button class="button button-primary upload-submit" type="submit" disabled data-upload-submit>شروع تحلیل</button>
+	</form>
+</section>
+{% endblock %}

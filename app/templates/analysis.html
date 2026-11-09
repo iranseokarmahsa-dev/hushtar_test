@@ -1,0 +1,59 @@
+{% extends "base.html" %}
+{% block title %}{{ project.title }} | نظریه‌یار{% endblock %}
+{% block content %}
+{% if not project.paragraphs %}
+<div class="breadcrumbs"><a href="/projects">پروژه‌ها</a><span>/</span><span>{{ project.title }}</span></div>
+<section class="page-heading project-heading">
+	<div><p class="eyebrow">پروژه پژوهشی</p><h1>{{ project.title }}</h1><p class="lede">{{ project.topic or 'موضوع پژوهش ثبت نشده است.' }}</p></div>
+	<div class="heading-actions">{% if project.analysis %}<a class="button button-secondary" href="/results/{{ project.project_id }}">مشاهده نتایج <span aria-hidden="true">←</span></a>{% endif %}<form action="/projects/{{ project.project_id }}/delete" method="post" data-confirm="حذف پروژه و همه داده‌های آن؟"><button class="button button-danger" type="submit">حذف پروژه</button></form></div>
+</section>
+<details class="project-details-editor"><summary>ویرایش عنوان و موضوع پژوهش</summary><form action="/projects/{{ project.project_id }}/details" method="post" class="form-stack"><label>عنوان پژوهش<input name="title" value="{{ project.title }}" required maxlength="180"></label><label>موضوع یا پرسش پژوهش<textarea name="topic" rows="3" maxlength="3000">{{ project.topic }}</textarea></label><button class="button button-secondary" type="submit">ذخیره مشخصات پژوهش</button></form></details>
+{% if not project.topic %}<p class="alert alert-warning" role="status">موضوع یا پرسش پژوهش ثبت نشده است. برای تحلیل دقیق‌تر، آن را در «ویرایش عنوان و موضوع پژوهش» تکمیل کنید؛ پرامپت از مدل می‌خواهد در نبود موضوع از نتیجه‌گیری قطعی خودداری کند.</p>{% endif %}
+<div class="workflow-steps"><span class="workflow-step is-current"><b>۱</b> مصاحبه و مفاهیم</span><span class="workflow-line"></span><span class="workflow-step {% if prompt %}is-current{% endif %}"><b>۲</b> پرامپت و تحلیل AI</span><span class="workflow-line"></span><span class="workflow-step {% if project.analysis %}is-current{% endif %}"><b>۳</b> نتایج و خروجی</span></div>
+<section class="panel workflow-panel">
+	<div class="section-heading"><div><p class="eyebrow">ورودی پژوهش</p><h2>بارگذاری متن مصاحبه</h2></div><span class="step-number">۰۱</span></div>
+	<p class="muted">فایل DOCX دارای جدول «متن مصاحبه»، «مفاهیم معنادار» و «کد» را بارگذاری کنید. متن جدید شناسه شاهد می‌گیرد و ردیف‌هایی که متنشان خالی است به همان شاهد متصل می‌شوند؛ مفاهیم و کدهای اولیه نیز خودکار استخراج می‌شوند.</p>
+	<form action="/projects/{{ project.project_id }}/interview" method="post" enctype="multipart/form-data" class="upload-form">
+		<label class="file-picker"><span class="file-icon" aria-hidden="true">↑</span><span><strong>انتخاب فایل Word</strong><small>فقط DOCX، حداکثر ۲۰ مگابایت</small></span><input type="file" name="interview" accept=".docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document" required></label>
+		<button class="button button-primary" type="submit">پردازش فایل</button>
+	</form>
+	{% if project.source_filename %}<p class="file-receipt">فایل فعلی: <strong>{{ project.source_filename }}</strong></p>{% endif %}
+</section>
+{% endif %}
+
+{% if project.paragraphs and not prompt and quality_report %}
+<section class="panel workflow-panel">
+	<div class="section-heading"><div><p class="eyebrow">کنترل کیفیت ورودی</p><h2>گزارش پردازش فایل</h2></div><span class="count-tag">{{ quality_report.paragraph_count }} شاهد · {{ quality_report.concept_count }} مفهوم</span></div>
+	<p class="muted">{{ quality_report.concepts_with_code }} مفهوم دارای کد · {{ quality_report.concepts_without_title }} عنوان خالی · {{ quality_report.concepts_without_code }} کد خالی · {{ quality_report.paragraphs_without_concepts }} شاهد بدون مفهوم · {{ quality_report.code_type_count }} نوع کد · {{ quality_report.structural_error_count }} خطای ساختاری</p>
+	<ul class="processing-operations">{% for operation in quality_report.operations %}<li>{{ operation }}</li>{% endfor %}</ul>
+	{% if quality_report.issues %}<div class="processing-issues" role="status"><strong>موارد نیازمند بررسی</strong><ul>{% for issue in quality_report.issues %}<li><span>{{ issue.item_id }}</span> {{ issue.message }}</li>{% endfor %}</ul></div>{% else %}<p class="alert alert-success">خطای ساختاری شناسایی نشد.</p>{% endif %}
+	{% if project.analysis %}
+	<p class="processing-guidance">مصاحبه شما تحلیل شده است؛ برای بازبینی مستقل هر بخش وارد شوید.</p>
+	<div class="form-actions">
+		{% if project.analysis.schema_version == '2.0' %}
+		<a class="button button-primary" href="/results/{{ project.project_id }}/concept-review">بازبینی مفاهیم</a>
+		<a class="button button-secondary" href="/results/{{ project.project_id }}/interview-analysis">تحلیل مصاحبه</a>
+		{% else %}<a class="button button-primary" href="/results/{{ project.project_id }}">مشاهده نتایج</a>{% endif %}
+	</div>
+	{% else %}
+	<p class="processing-guidance">مصاحبه شما پردازش شد. جهت دریافت پرامپت هوش مصنوعی، روی دکمه کلیک کنید.</p>
+	<a class="button button-primary" href="/analysis/{{ project.project_id }}">دریافت پرامپت هوش مصنوعی</a>
+	{% endif %}
+</section>
+{% endif %}
+
+{% if prompt %}
+<section class="panel workflow-panel prompt-panel">
+	<div class="section-heading"><div><p class="eyebrow">تبادل با هوش مصنوعی</p><h2>پرامپت تحلیل آماده است</h2></div><span class="step-number">۰۲</span></div>
+	<p class="muted">متن زیر را در ابزار هوش مصنوعی وارد کنید. JSON برگشتی را در همین صفحه وارد کنید تا ساختار و شناسه‌ها بررسی شوند.</p>
+	<div class="prompt-actions"><a class="button button-secondary" href="/analysis/{{ project.project_id }}/prompt.txt">دانلود فایل پرامپت</a><button class="button button-secondary" type="button" data-copy="#prompt-text">کپی پرامپت</button></div>
+	<textarea id="prompt-text" class="prompt-text" readonly rows="12">{{ prompt }}</textarea>
+	{% if error %}<div class="alert alert-error" role="alert">{{ error }}</div>{% endif %}
+	<form action="/analysis/{{ project.project_id }}/import" method="post" enctype="multipart/form-data" class="form-stack import-form">
+		<label>فایل JSON تحلیل<input type="file" name="analysis_file" accept=".json,application/json"></label>
+		<label>یا محتوای JSON را اینجا وارد کنید<textarea name="analysis_json" rows="8" dir="ltr" spellcheck="false" placeholder="{ &quot;schema_version&quot;: &quot;1.0&quot;, ... }"></textarea></label>
+		<button class="button button-primary" type="submit">اعتبارسنجی و ثبت تحلیل</button>
+	</form>
+</section>
+{% endif %}
+{% endblock %}

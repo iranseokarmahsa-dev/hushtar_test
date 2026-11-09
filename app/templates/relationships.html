@@ -1,0 +1,7 @@
+{% extends "base.html" %}
+{% block title %}روابط مقوله‌ها | هوشیار{% endblock %}
+{% block content %}
+<div class="breadcrumbs"><a href="/results/{{ project.project_id }}">نتایج</a><span>/</span><span>روابط</span></div>
+<section class="page-heading"><div><p class="eyebrow">روابط ثبت‌شده در تحلیل</p><h1>روابط مقوله‌ها</h1><p class="lede">فهرست رابطه‌هایی که در JSON تحلیل ثبت شده‌اند.</p></div></section>
+{% if project.analysis.relationships %}<section class="panel table-panel"><h2>فهرست روابط</h2><div class="table-scroll"><table><thead><tr><th>مبدأ</th><th>مقصد</th><th>نوع رابطه</th><th>شرح</th><th>اطمینان</th><th>بازبینی</th></tr></thead><tbody>{% for relation in project.analysis.relationships %}<tr><td>{{ relation.source_category_id }}</td><td>{{ relation.target_category_id }}</td><td>{{ relation.relationship_type }}</td><td>{{ relation.description }}</td><td>{{ (relation.confidence * 100)|round|int }}٪</td><td>{% if relation.needs_researcher_review %}لازم{% else %}—{% endif %}</td></tr>{% endfor %}</tbody></table></div></section>{% endif %}
+{% endblock %}

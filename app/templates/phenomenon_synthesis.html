@@ -1,0 +1,131 @@
+{% extends "base.html" %}
+{% block title %}پدیده محوری تلفیقی | نظریه‌یار{% endblock %}
+{% block content %}
+<section class="page-heading">
+	<div><p class="eyebrow">فاز ششم · پدیده محوری</p><h1>تلفیق پدیده‌های محوری</h1><p>Run: <code>{{ latest.run_id if latest else prompt.run_id if prompt else '' }}</code></p></div>
+	<div class="page-actions">
+		<a class="button button-secondary" href="/synthesis/runs">همه اجراها</a>
+		<a class="button button-secondary" href="/synthesis/runs/{{ latest.run_id if latest else prompt.run_id if prompt else '' }}/theme-synthesis">فاز پنجم</a>
+		<a class="button button-secondary" href="/synthesis/runs/{{ latest.run_id if latest else prompt.run_id if prompt else '' }}/relationship-synthesis">فاز روابط</a>
+	</div>
+</section>
+
+{% if page_error %}
+<section class="panel warning-panel"><strong>تولید Prompt متوقف شد</strong><p>{{ page_error }}</p>
+	{% if size_error_report %}<p>حجم Prompt: {{ size_error_report.prompt_chars }} نویسه؛ سقف: {{ size_error_report.max_prompt_chars }} نویسه.</p>{% endif %}
+</section>
+{% endif %}
+
+{% if prompt %}
+<section class="panel">
+	<h2>ورودی تأییدشده</h2>
+	<p>نسخه فاز پنجم: {{ prompt.source_phase_version }} · منابع: {{ prompt.size_report.source_count }} · پدیده‌های مصاحبه: {{ prompt.size_report.input_phenomenon_count }} · حجم Prompt: {{ prompt.size_report.prompt_chars }} / {{ prompt.size_report.max_prompt_chars }} نویسه</p>
+	<label>Prompt مستقل Markdown<textarea id="phenomenon-prompt" rows="18" readonly>{{ prompt.prompt_text }}</textarea></label>
+	<button type="button" class="button button-secondary" data-copy-prompt>کپی Prompt</button>
+	<h3>ثبت پاسخ AI</h3>
+	<p>پاسخ خام Markdown مستقل از تصمیم‌های پژوهشگر نگهداری می‌شود.</p>
+	<form method="post" action="/synthesis/runs/{{ prompt.run_id }}/phenomenon-synthesis/results" enctype="multipart/form-data">
+		<label>جای‌گذاری خروجی<textarea name="raw_output_text" rows="12" placeholder="# FINAL PHENOMENON RESULT"></textarea></label>
+		<label>یا فایل Markdown<input type="file" name="markdown_file" accept=".md,.markdown,text/markdown"></label>
+		<button class="button button-primary" type="submit">Parse و اعتبارسنجی</button>
+	</form>
+</section>
+{% endif %}
+
+{% if latest %}
+<section class="panel">
+	<h2>آخرین نسخه: {{ latest.version }}</h2>
+	<p>وضعیت: {{ latest.status }} · تأیید: {{ latest.approval_status }} · فاز پنجم: {{ latest.source_phase_version }}{% if latest.stale %} · <strong>منقضی شده</strong>{% endif %}</p>
+	<details><summary>گزارش اعتبارسنجی</summary><pre>{{ latest.validation_report_text }}</pre></details>
+	<details><summary>تاریخچه تصمیم‌های پژوهشگر ({{ latest.researcher_edits_json.decisions|length if latest.researcher_edits_json else 0 }})</summary>
+		<ol>{% for item in latest.researcher_edits_json.decisions if latest.researcher_edits_json %}<li><strong>{{ item.operation }}</strong> · {{ item.reason }} · {{ item.created_at }}</li>{% else %}<li>تصمیمی ثبت نشده است.</li>{% endfor %}</ol>
+	</details>
+	{% if latest.status == 'invalid' and not latest.stale %}<a class="button button-secondary" href="/synthesis/runs/{{ latest.run_id }}/phenomenon-synthesis/correction-prompt">Prompt اصلاحی</a>{% endif %}
+</section>
+{% endif %}
+
+{% if latest and latest.validation_report_json.valid and not latest.stale %}
+{% set result = latest.output_json %}
+{% set can_review = latest.approval_status != 'approved' %}
+<section class="panel">
+	<h2>بازبینی پژوهشگر</h2>
+	<p>پدیده محوری تلفیقی باید با شواهد و منابع قابل‌ردیابی باشد. تصمیم پژوهشگر نسخه‌گذاری می‌شود و هر تغییری، تحلیل روابط را منقضی می‌کند.</p>
+	{% set central = result.central_phenomenon %}
+	<article class="panel review-card">
+		<h3>{{ central.title }}</h3><p>{{ central.definition }}</p><p>{{ central.selection_reason }}</p>
+		<p>وضعیت: {{ central.review_status }} · اطمینان AI: {{ central.confidence }}</p>
+		<p>منابع پدیده: {% for item_id in central.supporting_source_phenomenon_ids %}<code>{{ item_id }}</code> {% else %}ندارد{% endfor %}</p>
+		<p>نودها: {% for node_id in central.supporting_node_ids %}<code>{{ node_id }}</code> {% else %}ندارد{% endfor %}</p>
+		<p>شواهد: {% for evidence_id in central.evidence_ref_ids %}<code>{{ evidence_id }}</code> {% else %}ندارد{% endfor %}</p>
+		{% if can_review %}
+		<form class="phase-review-form">
+			<input type="hidden" name="decision" value="edit_phenomenon">
+			<label>عنوان<input name="title" value="{{ central.title }}"></label>
+			<label>تعریف<textarea name="definition" rows="3">{{ central.definition }}</textarea></label>
+			<label>دلیل انتخاب<textarea name="selection_reason" rows="2">{{ central.selection_reason }}</textarea></label>
+			<label>دلیل اصلاح<input name="reason" required></label>
+			<button class="button button-secondary">ذخیره اصلاح</button>
+		</form>
+		<form class="phase-review-form"><input type="hidden" name="decision" value="approve_phenomenon"><label>دلیل تأیید<input name="reason" required></label><button class="button button-primary">تأیید پدیده محوری</button></form>
+		{% endif %}
+	</article>
+
+	<h3>تفسیرهای جایگزین</h3>
+	{% for item in result.alternatives %}
+	<article class="panel review-card">
+		<h4>{{ item.title }}</h4><p>{{ item.definition }}</p><p>{{ item.selection_comparison }}</p>
+		<p>وضعیت: {{ item.review_status }} · اطمینان: {{ item.confidence }}</p>
+		<p>نقاط قوت: {{ item.strengths|join('؛ ') }} · محدودیت‌ها: {{ item.limitations|join('؛ ') }}</p>
+		<p>شواهد: {% for evidence_id in item.evidence_ref_ids %}<code>{{ evidence_id }}</code> {% endfor %}</p>
+		{% if can_review %}
+		<form class="phase-review-form">
+			<input type="hidden" name="decision" value="edit_alternative"><input type="hidden" name="target_id" value="{{ item.alternative_id }}">
+			<label>عنوان<input name="title" value="{{ item.title }}"></label>
+			<label>تعریف<textarea name="definition" rows="2">{{ item.definition }}</textarea></label>
+			<label>مقایسه با گزینه اصلی<textarea name="selection_reason" rows="2">{{ item.selection_comparison }}</textarea></label>
+			<label>دلیل اصلاح<input name="reason" required></label><button class="button button-secondary">ویرایش جایگزین</button>
+		</form>
+		<form class="phase-review-form"><input type="hidden" name="decision" value="select_alternative"><input type="hidden" name="target_id" value="{{ item.alternative_id }}"><label>دلیل انتخاب<input name="reason" required></label><button class="button button-primary">انتخاب به‌عنوان پدیده اصلی</button></form>
+		<form class="phase-review-form"><input type="hidden" name="decision" value="dismiss_alternative"><input type="hidden" name="target_id" value="{{ item.alternative_id }}"><label>دلیل رد<input name="reason" required></label><button class="button button-secondary">رد تفسیر جایگزین</button></form>
+		{% endif %}
+	</article>
+	{% else %}<p>تفسیر جایگزینی گزارش نشده است.</p>{% endfor %}
+
+	<h3>تناقض‌ها</h3>
+	{% for item in result.contradictions %}
+	<article class="panel review-card">
+		<p>{{ item.description }}</p><p>{{ item.reasoning }}</p><p>وضعیت: {{ item.review_status }}</p>
+		<p>شناسه‌های منبع: {% for source_id in item.source_phenomenon_ids %}<code>{{ source_id }}</code> {% endfor %}{% for evidence_id in item.evidence_ref_ids %}<code>{{ evidence_id }}</code> {% endfor %}</p>
+		{% if can_review %}
+		<form class="phase-review-form"><input type="hidden" name="decision" value="edit_contradiction"><input type="hidden" name="target_id" value="{{ item.contradiction_id }}"><label>شرح<input name="description" value="{{ item.description }}"></label><label>دلیل<textarea name="reasoning">{{ item.reasoning }}</textarea></label><label>دلیل اصلاح<input name="reason" required></label><button class="button button-secondary">اصلاح تناقض</button></form>
+		<form class="phase-review-form"><input type="hidden" name="decision" value="approve_contradiction"><input type="hidden" name="target_id" value="{{ item.contradiction_id }}"><label>دلیل تأیید<input name="reason" required></label><button class="button button-primary">تأیید تناقض</button></form>
+		<form class="phase-review-form"><input type="hidden" name="decision" value="dismiss_contradiction"><input type="hidden" name="target_id" value="{{ item.contradiction_id }}"><label>دلیل رد<input name="reason" required></label><button class="button button-secondary">رد تناقض</button></form>
+		{% endif %}
+	</article>
+	{% else %}<p>تناقضی گزارش نشده است.</p>{% endfor %}
+	{% if can_review %}
+	<form class="phase-review-form"><input type="hidden" name="decision" value="approve_final"><label>دلیل تأیید نهایی<input name="reason" required></label><button class="button button-primary">تأیید نهایی پدیده محوری</button></form>
+	{% endif %}
+</section>
+{% endif %}
+{% endblock %}
+{% block scripts %}
+<script>
+	const copyButton = document.querySelector('[data-copy-prompt]');
+	if (copyButton) copyButton.addEventListener('click', async function () {
+		await navigator.clipboard.writeText(document.getElementById('phenomenon-prompt').value);
+		copyButton.textContent = 'کپی شد';
+	});
+	document.querySelectorAll('.phase-review-form').forEach(function (form) {
+		form.addEventListener('submit', async function (event) {
+			event.preventDefault();
+			const response = await fetch(window.location.pathname + '/review', {
+				method: 'POST', headers: {'Content-Type': 'application/json'},
+				body: JSON.stringify(Object.fromEntries(new FormData(form).entries()))
+			});
+			if (!response.ok) { const result = await response.json(); alert(result.detail || 'ثبت تصمیم ناموفق بود.'); return; }
+			window.location.reload();
+		});
+	});
+</script>
+{% endblock %}

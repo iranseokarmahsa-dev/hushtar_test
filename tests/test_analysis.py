@@ -1,11 +1,12 @@
 """Tests for prompt preparation and downloadable outputs."""
 
 from io import BytesIO
-import json
+import re
 
 from docx import Document
 from fastapi.testclient import TestClient
 from openpyxl import load_workbook
+import yaml
 
 from app.main import app
 from app.routers import results as results_router
@@ -22,8 +23,16 @@ def test_prompt_contains_project_ids_and_interview_text():
 	}
 	prompt = build_prompt(project)
 	assert "project-1" in prompt and "شاهد مصاحبه" in prompt and "C0001" in prompt
-	assert "هیچ شیء evidence نباید بدون این سه فیلد باشد" in prompt
-	input_data = json.loads(prompt.split("داده‌های پروژه (JSON):\n", 1)[1])
+	assert "## نخستین و اصلی‌ترین وظیفه" in prompt
+	assert "متن کامل هر پاراگراف را بخوانید" in prompt
+	assert "فایل Markdown با پسوند `.md`" in prompt
+	assert "دقیقاً شامل یک عنوان کوتاه Markdown" in prompt
+	assert "هر شاهد دارای paragraph_id، exact_quote و interpretation باشد" in prompt
+	input_markdown = prompt.split("## داده‌های پروژه", 1)[1]
+	input_yaml = re.search(r"```yaml\s*\n(.*?)```", input_markdown, flags=re.DOTALL)
+	assert input_yaml
+	input_data = yaml.safe_load(input_yaml.group(1))
+	assert "&id" not in prompt and "*id" not in prompt
 	assert input_data["concepts"][0]["supporting_paragraphs"][0]["text"] == "شاهد مصاحبه"
 	assert input_data["paragraphs"][0]["concepts"] == [
 		{"concept_id": "C0001", "title": "مفهوم", "initial_code": "کد"}

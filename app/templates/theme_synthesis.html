@@ -1,0 +1,270 @@
+{% extends "base.html" %}
+{% block title %}استخراج تم | نظریه‌یار{% endblock %}
+{% block content %}
+<section class="page-heading">
+	<div><p class="eyebrow">فاز پنجم · استخراج تم</p><h1>استخراج تم از Category Unitها</h1><p>Run: <code>{{ latest.run_id if latest else prompt.run_id if prompt else '' }}</code></p></div>
+	<div class="page-actions">
+		<a class="button button-secondary" href="/synthesis/runs">همه اجراها</a>
+		<a class="button button-secondary" href="/synthesis/runs/{{ latest.run_id if latest else prompt.run_id if prompt else '' }}/category-grouping">فاز چهارم</a>
+		<a class="button button-secondary" href="/synthesis/runs/{{ latest.run_id if latest else prompt.run_id if prompt else '' }}/phenomenon-synthesis">فاز ششم: پدیده محوری</a>
+	</div>
+</section>
+
+{% if page_error %}
+<section class="panel warning-panel"><strong>تولید Prompt متوقف شد</strong><p>{{ page_error }}</p>
+{% if size_error_report %}<p>حجم Prompt: {{ size_error_report.prompt_chars }} نویسه؛ سقف: {{ size_error_report.max_prompt_chars }} نویسه.</p>{% endif %}
+</section>
+{% endif %}
+
+{% if prompt %}
+<section class="panel">
+	<h2>ورودی تأییدشده فاز چهارم</h2>
+	<p>نسخه مبدأ: {{ prompt.source_phase_version }} · Category Unit: {{ prompt.category_units|length }} · حجم Prompt: {{ prompt.size_report.prompt_chars }} / {{ prompt.size_report.max_prompt_chars }} نویسه</p>
+	<p>این ورودی فقط از گروه‌های تأییدشده و مقوله‌های مستقل تأییدشده فاز چهارم ساخته شده است؛ مستقل‌های مستثناشده وارد نشده‌اند.</p>
+	<label>Prompt مستقل Markdown
+		<textarea id="theme-prompt" rows="18" readonly>{{ prompt.prompt_text }}</textarea>
+	</label>
+	<button type="button" class="button button-secondary" data-copy-theme-prompt>کپی Prompt</button>
+</section>
+<section class="panel">
+	<h2>ثبت پاسخ ChatGPT</h2>
+	<p>پاسخ خام Markdown و نسخه مبدأ مستقل از اصلاحات پژوهشگر نگهداری می‌شود.</p>
+	<form method="post" action="/synthesis/runs/{{ prompt.run_id }}/theme-synthesis/results" enctype="multipart/form-data">
+		<label>جای‌گذاری خروجی Markdown
+			<textarea name="raw_output_text" rows="14" placeholder="# THEME SYNTHESIS RESULT"></textarea>
+		</label>
+		<label>یا بارگذاری فایل Markdown
+			<input type="file" name="markdown_file" accept=".md,.markdown,text/markdown">
+		</label>
+		<button class="button button-primary" type="submit">Parse و اعتبارسنجی خروجی</button>
+	</form>
+</section>
+{% endif %}
+
+{% if latest %}
+<section class="panel">
+	<h2>آخرین نسخه: {{ latest.version }}</h2>
+	<p>وضعیت: {{ latest.status }} · تأیید: {{ latest.approval_status }} · نسخه فاز چهارم: {{ latest.source_phase_version }}{% if latest.stale %} · <strong>منقضی شده</strong>{% endif %}</p>
+	<details><summary>گزارش اعتبارسنجی</summary><pre>{{ latest.validation_report_text }}</pre></details>
+	<details><summary>تاریخچه تصمیم‌های پژوهشگر ({{ latest.researcher_edits_json.decisions|length if latest.researcher_edits_json else 0 }})</summary>
+		<ol>{% for item in latest.researcher_edits_json.decisions if latest.researcher_edits_json %}
+			<li><strong>{{ item.operation }}</strong> · {{ item.reason }} · {{ item.created_at }}</li>
+		{% else %}<li>تصمیمی ثبت نشده است.</li>{% endfor %}</ol>
+	</details>
+	{% if latest.status == 'invalid' and not latest.stale %}
+	<a class="button button-secondary" href="/synthesis/runs/{{ latest.run_id }}/theme-synthesis/correction-prompt">دریافت Prompt اصلاحی Markdown</a>
+	{% endif %}
+</section>
+{% endif %}
+
+{% if latest and latest.validation_report_json.valid and not latest.stale %}
+{% set result = latest.output_json %}
+{% set can_review = latest.approval_status != 'approved' %}
+<section class="panel">
+	<h2>بازبینی پژوهشگر</h2>
+	<p>هر Category Unit دقیقاً یک‌بار در یک تم یا فهرست بدون تم قرار دارد. تم تک‌واحدی فقط در صورت دفاع مفهومی پذیرفته می‌شود. هیچ تمی میان مؤلفه‌ها ادغام نمی‌شود.</p>
+	{% for component_key, component in result.component_results.items() %}
+	<section class="review-component">
+		<h3>{{ component_key }}</h3>
+		{% for theme in component.themes %}
+		<article class="panel review-card">
+			<h4>{{ theme.proposed_theme_name }}</h4>
+			<p>{{ theme.definition }}</p>
+			<p><strong>محدوده:</strong> {{ theme.conceptual_scope }}</p>
+			<p><strong>دلیل:</strong> {{ theme.reasoning }}</p>
+			<p>شناسه: <code>{{ theme.theme_id }}</code> · وضعیت: {{ theme.review_status }} · اطمینان AI: {{ theme.confidence }}</p>
+			<ul>{% for unit_id in theme.constituent_category_unit_ids %}
+				{% set unit = units_by_id.get(unit_id, {}) %}
+				<li>
+					{{ unit.category_name or unit_id }} — {{ unit.unit_kind or '' }} · <code>{{ unit_id }}</code>
+					<details><summary>منشأ و شواهد</summary>
+						{% for source_item in unit.source_items %}
+						<p>{{ source_item.category_name or source_item.source_item_id }} — {{ source_item.source_title or '' }}</p>
+						<p>{{ source_item.definition or '' }}</p>
+						{% for evidence in source_item.evidence_refs %}
+						<blockquote>{{ evidence.quote or 'متن شاهد موجود نیست' }}</blockquote>
+						<p>{{ evidence.interpretation or '' }} · {{ evidence.paragraph_id or '' }} · <code>{{ evidence.evidence_ref_id }}</code></p>
+						{% else %}<p>شاهدی ثبت نشده است.</p>{% endfor %}
+						{% endfor %}
+					</details>
+				</li>
+				{% if can_review %}
+				<form class="review-action" data-theme-review-form>
+					<input type="hidden" name="decision" value="mark_unthemed"><input type="hidden" name="category_unit_id" value="{{ unit_id }}">
+					<label>دلیل باقی‌ماندن بدون تم<input name="reason" required></label>
+					<button class="button button-secondary" type="submit">انتقال به فهرست بدون تم</button>
+				</form>
+				{% endif %}
+			{% endfor %}</ul>
+			<p><strong>ارجاع شواهد:</strong> {% for evidence_id in theme.evidence_ref_ids %}<code>{{ evidence_id }}</code> {% else %}ندارد{% endfor %}</p>
+			{% if can_review %}
+			<form class="review-action" data-theme-review-form>
+				<input type="hidden" name="decision" value="edit_theme"><input type="hidden" name="theme_id" value="{{ theme.theme_id }}">
+				<label>عنوان<input name="proposed_theme_name" value="{{ theme.proposed_theme_name }}"></label>
+				<label>تعریف<textarea name="definition" rows="2">{{ theme.definition }}</textarea></label>
+				<label>دلیل<textarea name="reasoning" rows="2">{{ theme.reasoning }}</textarea></label>
+				<label>محدوده مفهومی<textarea name="conceptual_scope" rows="2">{{ theme.conceptual_scope }}</textarea></label>
+				<label>دلیل اصلاح پژوهشگر<input name="reason" required></label>
+				<button class="button button-secondary" type="submit">ذخیره اصلاح و نیازمند تأیید مجدد</button>
+			</form>
+			<form class="review-action" data-theme-review-form>
+				<input type="hidden" name="decision" value="approve_theme"><input type="hidden" name="theme_id" value="{{ theme.theme_id }}">
+				<label>دلیل تأیید<input name="reason" required></label>
+				<button class="button button-primary" type="submit">تأیید تم</button>
+			</form>
+			<form class="review-action" data-theme-review-form data-theme-split-form>
+				<input type="hidden" name="decision" value="split_theme"><input type="hidden" name="theme_id" value="{{ theme.theme_id }}">
+				<label>هر خط: شناسه‌های Category Unit با کاما، سپس «| عنوان | تعریف»
+					<textarea name="partitions_text" rows="3" placeholder="catunit_a,catunit_b|عنوان اول|تعریف اول&#10;catunit_c|عنوان دوم|تعریف دوم"></textarea>
+				</label>
+				<label>دلیل تقسیم<input name="reason" required></label>
+				<button class="button button-secondary" type="submit">تقسیم تم</button>
+			</form>
+			{% endif %}
+		</article>
+		{% else %}<p>تمی پیشنهاد نشده است.</p>{% endfor %}
+
+		{% if can_review and component.themes|length > 1 %}
+		<form class="review-action" data-theme-review-form>
+			<h4>ادغام دو تم در همین مؤلفه</h4>
+			<input type="hidden" name="decision" value="merge_themes">
+			<label>تم حذف‌شونده<select name="theme_id">{% for theme in component.themes %}<option value="{{ theme.theme_id }}">{{ theme.proposed_theme_name }}</option>{% endfor %}</select></label>
+			<label>تم حفظ‌شونده<select name="target_theme_id">{% for theme in component.themes %}<option value="{{ theme.theme_id }}">{{ theme.proposed_theme_name }}</option>{% endfor %}</select></label>
+			<label>عنوان نهایی اختیاری<input name="proposed_theme_name"></label>
+			<label>تعریف نهایی اختیاری<textarea name="definition" rows="2"></textarea></label>
+			<label>دلیل ادغام<input name="reason" required></label>
+			<button class="button button-secondary" type="submit">ادغام تم‌ها</button>
+		</form>
+		{% endif %}
+
+		{% if component.unthemed_category_units %}
+		<h4>Category Unitهای بدون تم</h4>
+		{% for item in component.unthemed_category_units %}
+		<article class="panel review-card">
+			{% set unit = units_by_id.get(item.category_unit_id, {}) %}
+			<p>{{ unit.category_name or item.category_unit_id }} · <code>{{ item.category_unit_id }}</code></p>
+			<p>{{ item.reason }} · وضعیت: {{ item.review_status }}</p>
+			<details><summary>منشأ و شواهد</summary>
+				{% for source_item in unit.source_items %}
+					<p>{{ source_item.category_name or source_item.source_item_id }} — {{ source_item.source_title or '' }}</p>
+					<p>{{ source_item.definition or '' }}</p>
+					{% for evidence in source_item.evidence_refs %}
+					<blockquote>{{ evidence.quote or 'متن شاهد موجود نیست' }}</blockquote>
+					<p>{{ evidence.interpretation or '' }} · {{ evidence.paragraph_id or '' }} · <code>{{ evidence.evidence_ref_id }}</code></p>
+					{% else %}<p>شاهدی ثبت نشده است.</p>{% endfor %}
+				{% endfor %}
+			</details>
+			{% if can_review %}
+			<form class="review-action" data-theme-review-form>
+				<input type="hidden" name="decision" value="approve_unthemed"><input type="hidden" name="category_unit_id" value="{{ item.category_unit_id }}">
+				<label>دلیل پذیرش بدون تم<input name="reason" required></label>
+				<button class="button button-primary" type="submit">تأیید بدون تم</button>
+			</form>
+			{% if component.themes %}
+			<form class="review-action" data-theme-review-form>
+				<input type="hidden" name="decision" value="move_category_unit"><input type="hidden" name="category_unit_id" value="{{ item.category_unit_id }}">
+				<label>انتقال به تم<select name="target_theme_id">{% for theme in component.themes %}<option value="{{ theme.theme_id }}">{{ theme.proposed_theme_name }}</option>{% endfor %}</select></label>
+				<label>دلیل انتقال<input name="reason" required></label>
+				<button class="button button-secondary" type="submit">انتقال به تم</button>
+			</form>
+			{% endif %}
+			{% endif %}
+		</article>
+		{% endfor %}
+		{% endif %}
+
+		{% if can_review and component.themes %}
+		<form class="review-action" data-theme-review-form>
+			<h4>انتقال واحد به تم موجود</h4>
+			<input type="hidden" name="decision" value="move_category_unit">
+			<label>Category Unit<select name="category_unit_id">{% for theme in component.themes %}{% for unit_id in theme.constituent_category_unit_ids %}<option value="{{ unit_id }}">{{ units_by_id.get(unit_id, {}).category_name or unit_id }}</option>{% endfor %}{% endfor %}</select></label>
+			<label>تم مقصد<select name="target_theme_id">{% for theme in component.themes %}<option value="{{ theme.theme_id }}">{{ theme.proposed_theme_name }}</option>{% endfor %}</select></label>
+			<label>دلیل انتقال<input name="reason" required></label>
+			<button class="button button-secondary" type="submit">انتقال Category Unit</button>
+		</form>
+		{% endif %}
+
+		<h4>تناقض‌ها</h4>
+		{% for contradiction in component.contradictions %}
+		<article class="panel review-card">
+			<p>{{ contradiction.description }}</p><p>{{ contradiction.reasoning }}</p>
+			<p>وضعیت: {{ contradiction.review_status }} · <code>{{ contradiction.contradiction_id }}</code></p>
+			<p>واحدها: {% for unit_id in contradiction.category_unit_ids %}<code>{{ unit_id }}</code> {% endfor %}</p>
+			<p>شواهد:</p>
+			<ul>{% for evidence_id in contradiction.evidence_ref_ids %}
+				{% set evidence = evidence_by_id.get(evidence_id, {}) %}
+				<li><code>{{ evidence_id }}</code><blockquote>{{ evidence.quote or 'متن شاهد موجود نیست' }}</blockquote><p>{{ evidence.interpretation or '' }}</p></li>
+			{% else %}<li>شاهدی ندارد.</li>{% endfor %}</ul>
+			{% if can_review %}
+			<form class="review-action" data-theme-review-form>
+				<input type="hidden" name="decision" value="edit_contradiction"><input type="hidden" name="contradiction_id" value="{{ contradiction.contradiction_id }}">
+				<label>شرح نهایی<input name="definition" value="{{ contradiction.description }}"></label>
+				<label>توجیه نهایی<input name="reasoning" value="{{ contradiction.reasoning }}"></label>
+				<label>دلیل اصلاح<input name="reason" required></label>
+				<button class="button button-secondary" type="submit">اصلاح تناقض</button>
+			</form>
+			<form class="review-action" data-theme-review-form>
+				<input type="hidden" name="decision" value="approve_contradiction"><input type="hidden" name="contradiction_id" value="{{ contradiction.contradiction_id }}">
+				<label>دلیل تأیید<input name="reason" required></label><button class="button button-primary" type="submit">تأیید تناقض</button>
+			</form>
+			<form class="review-action" data-theme-review-form>
+				<input type="hidden" name="decision" value="dismiss_contradiction"><input type="hidden" name="contradiction_id" value="{{ contradiction.contradiction_id }}">
+				<label>دلیل رد<input name="reason" required></label><button class="button button-secondary" type="submit">رد تناقض</button>
+			</form>
+			{% endif %}
+		</article>
+		{% else %}<p>تناقضی گزارش نشده است.</p>{% endfor %}
+	</section>
+	{% endfor %}
+	{% if can_review %}
+	<form class="review-action" data-theme-review-form>
+		<input type="hidden" name="decision" value="approve_final">
+		<label>دلیل تأیید نهایی فاز پنجم<input name="reason" required></label>
+		<button class="button button-primary" type="submit" onclick="return confirm('تأیید نهایی استخراج تم انجام شود؟')">تأیید نهایی فاز پنجم</button>
+	</form>
+	{% endif %}
+</section>
+{% endif %}
+{% endblock %}
+
+{% block scripts %}
+<script>
+	const copyThemePromptButton = document.querySelector('[data-copy-theme-prompt]');
+	if (copyThemePromptButton) {
+		copyThemePromptButton.addEventListener('click', async function () {
+			await navigator.clipboard.writeText(document.getElementById('theme-prompt').value);
+			copyThemePromptButton.textContent = 'کپی شد';
+		});
+	}
+	document.querySelectorAll('[data-theme-review-form]').forEach(function (form) {
+		form.addEventListener('submit', async function (event) {
+			event.preventDefault();
+			const formData = new FormData(form, event.submitter);
+			const payload = Object.fromEntries(formData.entries());
+			if (form.dataset.themeSplitForm !== undefined) {
+				payload.partitions = String(payload.partitions_text || '').split(/\r?\n/)
+					.map(function (line) {
+						const parts = line.split('|');
+						return {
+							category_unit_ids: (parts[0] || '').split(',').map(function (item) { return item.trim(); }).filter(Boolean),
+							proposed_theme_name: (parts[1] || '').trim(),
+							definition: (parts[2] || '').trim()
+						};
+					}).filter(function (partition) { return partition.category_unit_ids.length; });
+				delete payload.partitions_text;
+			}
+			const response = await fetch(window.location.pathname + '/review', {
+				method: 'POST',
+				headers: {'Content-Type': 'application/json'},
+				body: JSON.stringify(payload)
+			});
+			const result = await response.json();
+			if (!response.ok) {
+				alert(result.detail || 'ثبت تصمیم ناموفق بود.');
+				return;
+			}
+			window.location.reload();
+		});
+	});
+</script>
+{% endblock %}

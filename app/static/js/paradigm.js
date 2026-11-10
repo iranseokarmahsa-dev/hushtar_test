@@ -103,10 +103,56 @@ if (dataElement && canvas && links && zoomContent && viewport && detailPanel) {
 		for (const item of evidence) {
 			const quote = document.createElement("blockquote");
 			quote.append(document.createTextNode(`${item.paragraph_id || ""} «${item.exact_quote || ""}»`));
+			if (item.source_title || item.source_interview_id) {
+				addText(
+					quote,
+					"small",
+					[item.source_title, item.source_interview_id].filter(Boolean).join(" · "),
+				);
+			}
 			if (item.interpretation) addText(quote, "small", item.interpretation);
 			disclosure.append(quote);
 		}
 		parent.append(disclosure);
+	}
+
+	function renderFinalNodeDetails(node) {
+		detailPanel.replaceChildren();
+		addText(detailPanel, "p", "جزئیات نود", "eyebrow");
+		addText(detailPanel, "h2", node.title);
+		const section = document.createElement("section");
+		section.className = "diagram-detail-item";
+		addText(section, "p", node.description, "muted");
+		appendChips(section, "نوع نود", [node.node_type]);
+		appendChips(section, "مؤلفه", [node.component_key]);
+		appendChips(section, "شناسه نود", [node.id]);
+		appendChips(section, "واحدهای مقوله", node.category_unit_ids);
+		appendChips(section, "شناسه‌های منبع", node.source_item_ids);
+		appendChips(section, "مصاحبه‌های منبع", node.source_project_ids);
+		appendChips(section, "مفاهیم منبع", node.source_concept_ids);
+		appendChips(section, "زیرمقوله‌های منبع", node.source_subcategory_ids);
+		appendChips(section, "شناسه شواهد", node.evidence_ref_ids);
+		if (node.selection_reason) addText(section, "p", `دلیل انتخاب: ${node.selection_reason}`);
+		appendEvidence(section, node.evidence);
+		detailPanel.append(section);
+	}
+
+	function renderFinalRelationshipDetails(relation) {
+		detailPanel.replaceChildren();
+		addText(detailPanel, "p", "رابطه تأییدشده", "eyebrow");
+		addText(detailPanel, "h2", relation.relationship_type);
+		const section = document.createElement("section");
+		section.className = "diagram-detail-item";
+		addText(section, "p", relation.description);
+		addText(section, "p", `جهت: ${relation.direction}`);
+		if (relation.reasoning) addText(section, "p", relation.reasoning);
+		appendChips(section, "شناسه رابطه", [relation.relationship_id]);
+		appendChips(section, "نود مبدأ", [relation.source_title, relation.source]);
+		appendChips(section, "نود مقصد", [relation.target_title, relation.target]);
+		appendChips(section, "روابط منبع", relation.supporting_source_relationship_ids);
+		appendChips(section, "شناسه شواهد", relation.evidence_ref_ids);
+		appendEvidence(section, relation.evidence);
+		detailPanel.append(section);
 	}
 
 	function drawEdges() {
@@ -144,12 +190,35 @@ if (dataElement && canvas && links && zoomContent && viewport && detailPanel) {
 			path.classList.add("paradigm-edge", `is-${edge.kind}`);
 			path.setAttribute("d", pathData);
 			path.setAttribute("fill", "none");
-			path.setAttribute("stroke", "#111111");
-			path.setAttribute("stroke-width", "1.5");
-			path.setAttribute("marker-end", "url(#paradigm-arrow)");
+			const edgeStyle = {
+				direct: { color: "#222222", dash: "" },
+				interpretive: { color: "#456c55", dash: "8 4" },
+				hypothetical: { color: "#927127", dash: "2 4" },
+				structural: { color: "#8a918c", dash: "1 5" },
+			}[edge.kind] || { color: "#222222", dash: "" };
+			path.setAttribute("stroke", edgeStyle.color);
+			path.setAttribute("stroke-width", edge.structural ? "1" : "1.7");
+			if (edgeStyle.dash) path.setAttribute("stroke-dasharray", edgeStyle.dash);
+			if (!edge.structural) path.setAttribute("marker-end", "url(#paradigm-arrow)");
+			if (!edge.structural && edge.direction === "bidirectional") {
+				path.setAttribute("marker-start", "url(#paradigm-arrow-start)");
+			}
 			const title = document.createElementNS(svgNamespace, "title");
 			title.textContent = edge.label;
 			path.append(title);
+			if (!edge.structural && edge.relationship_id) {
+				path.setAttribute("tabindex", "0");
+				path.setAttribute("role", "button");
+				path.setAttribute("aria-label", `${edge.relationship_type}: ${edge.description}`);
+				const showDetails = () => renderFinalRelationshipDetails(edge);
+				path.addEventListener("click", showDetails);
+				path.addEventListener("keydown", event => {
+					if (event.key === "Enter" || event.key === " ") {
+						event.preventDefault();
+						showDetails();
+					}
+				});
+			}
 			links.append(path);
 		}
 	}
@@ -171,14 +240,21 @@ if (dataElement && canvas && links && zoomContent && viewport && detailPanel) {
 		viewport.scrollTo({ top: 0, left: 0, behavior: "smooth" });
 	}
 
-	for (const node of diagram.nodes) {
-		const button = document.querySelector(`#paradigm-node-${CSS.escape(node.id)}`);
-		button?.addEventListener("click", () => {
-			document.querySelectorAll(".paradigm-node").forEach(item => {
-				item.setAttribute("aria-pressed", String(item === button));
+	if (diagram.model_mode === "final") {
+		for (const node of diagram.entity_nodes) {
+			const button = document.querySelector(`#paradigm-node-${CSS.escape(node.id)}`);
+			button?.addEventListener("click", () => renderFinalNodeDetails(node));
+		}
+	} else {
+		for (const node of diagram.nodes) {
+			const button = document.querySelector(`#paradigm-node-${CSS.escape(node.id)}`);
+			button?.addEventListener("click", () => {
+				document.querySelectorAll(".paradigm-node").forEach(item => {
+					item.setAttribute("aria-pressed", String(item === button));
+				});
+				renderDetails(node);
 			});
-			renderDetails(node);
-		});
+		}
 	}
 
 	document.querySelectorAll("[data-zoom]").forEach(button => {

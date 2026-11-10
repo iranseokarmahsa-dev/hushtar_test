@@ -1,0 +1,35 @@
+{% extends "base.html" %}
+{% block title %}اجراهای تلفیقی | نظریه‌یار{% endblock %}
+{% block content %}
+<section class="page-heading">
+	<div><p class="eyebrow">سنتز پژوهشی</p><h1>اجراهای تلفیقی</h1></div>
+	<div class="page-actions">
+		<a class="button button-secondary" href="/synthesis/select">ایجاد اجرای جدید</a>
+		<a class="button button-secondary" href="/projects">بازگشت به تاریخچه</a>
+	</div>
+</section>
+{% if runs %}
+<section class="panel table-panel">
+	<div class="table-scroll"><table><thead><tr><th>عنوان</th><th>منابع</th><th>مرحله</th><th>وضعیت</th><th>آخرین تغییر</th><th></th></tr></thead><tbody>
+	{% for run in runs %}
+	<tr>
+		<td>{{ run.title }}</td>
+		<td>{{ run.selected_source_count }}{% if run.expected_source_count %} / {{ run.expected_source_count }}{% endif %}</td>
+		<td>{{ run.current_stage }}</td>
+		<td>{{ run.status }}</td>
+		<td>{{ run.updated_at[:10] }}</td>
+		<td>
+			<a class="button button-secondary" href="/synthesis/runs/{{ run.run_id }}/category-grouping">فاز چهارم</a>
+			<a class="button button-secondary" href="/synthesis/runs/{{ run.run_id }}/theme-synthesis">فاز پنجم</a>
+			<a class="button button-secondary" href="/synthesis/runs/{{ run.run_id }}/phenomenon-synthesis">پدیده محوری</a>
+			<a class="button button-secondary" href="/synthesis/runs/{{ run.run_id }}/relationship-synthesis">روابط</a>
+			<a class="button button-secondary" href="/synthesis/runs/{{ run.run_id }}/final-model">مدل نهایی</a>
+		</td>
+	</tr>
+	{% endfor %}
+	</tbody></table></div>
+</section>
+{% else %}
+<section class="panel empty-state"><strong>اجرای تلفیقی ثبت نشده است</strong><p>برای شروع، مصاحبه‌های تأییدشده را انتخاب کنید.</p><a class="button button-primary" href="/synthesis/select">انتخاب مصاحبه‌ها</a></section>
+{% endif %}
+{% endblock %}

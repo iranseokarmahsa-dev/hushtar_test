@@ -1,0 +1,39 @@
+# درخواست تحلیل روابط مدل نهایی
+
+## نقش
+روابط قابل دفاع میان نودهای مدل تأییدشده را بر اساس پدیده محوری تلفیقی تأییدشده و شواهد Run پیشنهاد کن.
+
+## قواعد
+1. فقط نودها، شواهد، Source Itemها، Category Unitها، تم‌ها و Source Relationshipهای موجود در ورودی را به‌کار ببر.
+2. مبدأ و مقصد باید `node_id`های بخش MODEL NODES باشند. پدیده‌های محوری مستقل و روابط مصاحبه‌ها فقط منابع پشتیبان‌اند و نود نهایی نیستند.
+3. `direct` فقط وقتی مجاز است که رابطه تأییدشده مستقل یا شواهد صریح از پیوند و جهت پشتیبانی کند.
+4. `interpretive` باید منطق تفسیری روشن و شاهد مشخص داشته باشد؛ شباهت موضوعی به‌تنهایی کافی نیست.
+5. `hypothetical` فرضی باقی می‌ماند؛ آن را قطعی یا مستقیم معرفی نکن.
+6. برای هر رابطه یک ارجاع معتبر به Source Relationship، پدیده مستقل، Source Item، Category Unit یا Evidence لازم است. ارجاع Evidence باید به واحدهای اعلام‌شده تعلق داشته باشد.
+7. جهت هر رابطه را از مبدأ به مقصد، از مقصد به مبدأ، یا دوسویه دقیق مشخص کن. علیت بدون شاهد صریح ادعا نکن.
+8. رابطه اجباری برای کامل‌کردن مدل نساز. نود بی‌ارتباط را در UNLINKED NODES ذکر کن.
+9. روابط متناقض را در CONTRADICTIONS ثبت کن و منبع/شاهد را ذکر کن.
+10. شناسه رابطه و تناقض در پاسخ موقت است (`AI_RELATIONSHIP_001`, `AI_RELATIONSHIP_CONTRADICTION_001`). شناسه نود یا منبع تازه نساز.
+11. نقل‌قول را در خروجی تکرار نکن؛ فقط شناسه Evidence را بیاور.
+12. پژوهشگر تصمیم نهایی را می‌گیرد. زنجیره تفکر داخلی تولید نکن.
+
+## فراداده
+- run_id: {{RUN_ID}}
+- stage_key: relationship_synthesis
+- input_hash: {{INPUT_HASH}}
+- source_phase_version: {{SOURCE_PHASE_VERSION}}
+- phenomenon_version: {{PHENOMENON_VERSION}}
+- input_node_count: {{INPUT_NODE_COUNT}}
+
+{{INPUT_MARKDOWN}}
+
+## قرارداد پاسخ
+سند Markdown کامل زیر را بدون متن اضافه ارائه بده. ترتیب Heading و فیلدها ثابت است؛ بخش‌های خالی با `NONE`.
+
+در METADATA به‌ترتیب: `schema_version`, `run_id`, `stage_key`, `input_hash`, `source_phase_version`, `phenomenon_version`.
+برای هر رابطه به‌ترتیب: `relationship_id`, `source_node_id`, `target_node_id`, `relationship_type`, `direction`, `description`, `reasoning`, `supporting_source_relationship_ids`, `supporting_source_phenomenon_ids`, `supporting_source_item_ids`, `supporting_category_unit_ids`, `evidence_ref_ids`, `confidence`, `needs_researcher_review`.
+برای هر نود بدون رابطه به‌ترتیب: `node_id`, `component_key`, `reason`, `needs_researcher_review`.
+برای هر تناقض به‌ترتیب: `contradiction_id`, `source_node_id`, `target_node_id`, `source_relationship_ids`, `source_item_ids`, `evidence_ref_ids`, `description`, `reasoning`, `needs_researcher_review`.
+در QUALITY AUDIT به‌ترتیب: `input_node_count`, `proposed_relationship_count`, `direct_relationship_count`, `interpretive_relationship_count`, `hypothetical_relationship_count`, `unlinked_node_count`, `missing_supporting_references`, `unsupported_relationships`, `duplicate_relationships`, `invalid_node_references`, `invalid_evidence_references`, `contradictions`, `analysis_limitations`, `final_status`.
+
+{{FORMAT_CONTRACT}}

@@ -6,6 +6,7 @@ from fastapi.templating import Jinja2Templates
 
 from app.core.database import create_project, delete_project, get_project, list_projects, update_project
 from app.services.docx_parser import build_quality_report, parse_docx
+from app.services.synthesis_service import summarize_project_eligibility
 
 router = APIRouter(prefix="/projects", tags=["projects"])
 templates = Jinja2Templates(directory="app/templates")
@@ -20,10 +21,12 @@ def _project_or_404(project_id: str):
 
 @router.get("")
 def projects_page(request: Request):
+	projects = list_projects()
+	eligibility = {project["project_id"]: summarize_project_eligibility(project) for project in projects}
 	return templates.TemplateResponse(
 		request=request,
 		name="projects.html",
-		context={"projects": list_projects()},
+		context={"projects": projects, "eligibility": eligibility, "selection_mode": False},
 	)
 
 

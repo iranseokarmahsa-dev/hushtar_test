@@ -1,0 +1,106 @@
+{% extends "base.html" %}
+{% block title %}مدل نهایی | نظریه‌یار{% endblock %}
+{% block content %}
+<section class="page-heading">
+	<div><p class="eyebrow">فاز هفتم · مدل پارادایمی نهایی</p><h1>مدل پارادایمی تلفیقی</h1><p>Run: <code>{{ run_id }}</code></p></div>
+	<div class="page-actions">
+		<a class="button button-secondary" href="/synthesis/runs">همه اجراها</a>
+		<a class="button button-secondary" href="/synthesis/runs/{{ run_id }}/phenomenon-synthesis">پدیده محوری</a>
+		<a class="button button-secondary" href="/synthesis/runs/{{ run_id }}/relationship-synthesis">روابط</a>
+	</div>
+</section>
+{% if page_error %}<section class="panel warning-panel"><strong>مدل نهایی هنوز قابل ساخت نیست</strong><p>{{ page_error }}</p></section>{% endif %}
+{% if latest %}
+<section class="panel">
+	<h2>آخرین مدل · نسخه {{ latest.version }}</h2>
+	<p>وضعیت: {{ latest.status }} · تأیید: {{ latest.approval_status }}{% if latest.stale %} · <strong>منقضی شده؛ مراحل قبلی تغییر کرده‌اند</strong>{% endif %}</p>
+	{% if latest.output_json.quality_audit %}
+	<p>ممیزی: {{ latest.output_json.quality_audit.status }} · منابع: {{ latest.output_json.quality_audit.input_source_count }} · نودها: {{ latest.output_json.quality_audit.node_count }} · روابط: {{ latest.output_json.quality_audit.edge_count }} · شواهد: {{ latest.output_json.quality_audit.evidence_count }}</p>
+	{% endif %}
+	<details><summary>مدل، ممیزی و زنجیره ردیابی</summary><pre>{{ latest.output_json|tojson(indent=2) }}</pre></details>
+</section>
+{% endif %}
+{% if latest_is_current and diagram %}
+<header class="analysis-page-header paradigm-page-header">
+	<div><p class="eyebrow">نسخه {{ diagram.model_version }}</p><h2>نمودار مدل نهایی</h2><p class="lede">نودها و روابط از مدل تأییدشده ساخته شده‌اند؛ پیوندهای ساختاری صرفاً برای چیدمان هستند.</p></div>
+	<div class="paradigm-page-actions">
+		<button class="button button-secondary" type="button" data-zoom="out" aria-label="کوچک‌نمایی نمودار">−</button>
+		<button class="button button-secondary" type="button" data-zoom="fit">نمایش کامل</button>
+		<button class="button button-secondary" type="button" data-zoom="in" aria-label="بزرگ‌نمایی نمودار">+</button>
+		<a class="button button-secondary" href="/synthesis/runs/{{ run_id }}/final-model/export/png">دریافت PNG</a>
+		<a class="button button-secondary" href="/synthesis/runs/{{ run_id }}/final-model/export/svg">دریافت SVG</a>
+		<button class="button button-secondary" type="button" data-print>چاپ / PDF</button>
+	</div>
+</header>
+<section class="paradigm-workspace">
+	<div class="paradigm-viewport" id="paradigm-viewport" aria-label="نمودار پارادایمی نهایی">
+		<div class="paradigm-zoom-content" id="paradigm-zoom-content">
+			<div class="paradigm-canvas final-paradigm-canvas" id="paradigm-canvas">
+				<svg class="paradigm-links" id="paradigm-links" aria-hidden="true">
+					<defs>
+						<marker id="paradigm-arrow" markerWidth="10" markerHeight="8" refX="8" refY="4" orient="auto"><path d="M0,0 L9,4 L0,8 Z" fill="context-stroke"></path></marker>
+						<marker id="paradigm-arrow-start" markerWidth="10" markerHeight="8" refX="1" refY="4" orient="auto"><path d="M9,0 L0,4 L9,8 Z" fill="context-stroke"></path></marker>
+					</defs>
+				</svg>
+				{% for node in diagram.nodes %}
+				<div class="paradigm-node paradigm-node-{{ node.id }} final-paradigm-component" id="paradigm-node-{{ node.id }}">
+					<div class="paradigm-node-heading"><strong>{{ node.label }}</strong></div>
+					<div class="paradigm-node-items">
+						{% for item in node["items"] %}
+						<button type="button" class="paradigm-node-item paradigm-entity-node" id="paradigm-node-{{ item.id }}" aria-label="جزئیات {{ item.title }}">
+							<strong>{{ item.title }}</strong>
+							<small>{{ item.node_type }}</small>
+							<small class="diagram-ids">{{ item.id }}</small>
+						</button>
+						{% else %}
+						<span class="paradigm-node-empty">نود تأییدشده‌ای در این مؤلفه ثبت نشده است.</span>
+						{% endfor %}
+					</div>
+				</div>
+				{% endfor %}
+			</div>
+		</div>
+	</div>
+	<aside class="paradigm-detail-panel panel" id="paradigm-detail" aria-live="polite">
+		<p class="eyebrow">جزئیات مدل</p><h2>برای مشاهده جزئیات، یک نود یا رابطه را انتخاب کنید</h2>
+		<p class="muted">شواهد، شناسه‌های منبع و منشأ هر نود و رابطه قابل بازیابی است.</p>
+	</aside>
+</section>
+<div class="paradigm-legend final-paradigm-legend" aria-label="راهنمای نمودار">
+	<span><i class="legend-line legend-solid"></i> رابطه مستقیم تأییدشده</span>
+	<span><i class="legend-line legend-dashed"></i> رابطه تفسیری تأییدشده</span>
+	<span><i class="legend-line legend-dotted"></i> رابطه فرضی تأییدشده</span>
+	<span><i class="legend-line legend-structural"></i> پیوند ساختاری صرفاً برای چیدمان</span>
+</div>
+<p class="paradigm-export-status" id="paradigm-export-status" role="status" aria-live="polite"></p>
+{% if diagram.relationships %}
+<section class="paradigm-relationship-list panel">
+	<div class="dashboard-section-heading"><div><p class="eyebrow">روابط تجربی تأییدشده</p><h2>روابط ثبت‌شده در مدل نهایی</h2></div><span class="count-tag">{{ diagram.relationships|length }} رابطه</span></div>
+	<div class="paradigm-relationships">
+		{% for relation in diagram.relationships %}
+		<details class="paradigm-relationship final-model-relationship is-{{ relation.relationship_type }}">
+			<summary><span class="entity-id">{{ relation.relationship_id }}</span><strong>{{ relation.source_title }} ← {{ relation.target_title }}</strong><span class="status-pill">{{ relation.relationship_type }}</span><span>{{ relation.description }}</span></summary>
+			<div class="paradigm-relationship-details">
+				<p>جهت: {{ relation.direction }} · استدلال: {{ relation.reasoning }}</p>
+				<p>روابط منبع: {{ relation.supporting_source_relationship_ids|join('، ') if relation.supporting_source_relationship_ids else 'ثبت نشده' }}</p>
+				{% for evidence in relation.evidence %}<blockquote>{{ evidence.paragraph_id }} «{{ evidence.exact_quote }}»<small>{{ evidence.interpretation }}</small></blockquote>{% else %}<p class="muted">برای این رابطه شاهدی ثبت نشده است.</p>{% endfor %}
+			</div>
+		</details>
+		{% endfor %}
+	</div>
+</section>
+{% endif %}
+<script type="application/json" id="paradigm-data">{{ diagram|tojson }}</script>
+{% endif %}
+{% if can_build %}
+<section class="panel">
+	<h2>پیش‌نیازهای تأییدشده و ممیزی</h2>
+	<p>نسخه فاز پنجم: {{ inputs.phase_five_result.version }} · نسخه پدیده محوری: {{ phenomenon.version }} · نسخه روابط: {{ relationships.version }}</p>
+	<p>مدل با ساختار شش‌مؤلفه‌ای، شواهد و منابع قابل‌ردیابی، و فقط Edgeهای تأییدشده پژوهشگر ساخته می‌شود. هیچ تحلیل هوش مصنوعی تازه‌ای اجرا نمی‌شود.</p>
+	<form method="post" action="/synthesis/runs/{{ run_id }}/final-model">
+		<button class="button button-primary" type="submit" onclick="return confirm('مدل نهایی از نسخه‌های تأییدشده ساخته شود؟')">{% if latest and latest.stale %}ساخت نسخه به‌روز{% else %}ساخت مدل نهایی{% endif %}</button>
+	</form>
+</section>
+{% endif %}
+{% endblock %}
+{% block scripts %}{% if latest_is_current and diagram %}<script src="/static/js/paradigm.js"></script>{% endif %}{% endblock %}

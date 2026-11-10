@@ -45,13 +45,13 @@
 {% if prompt %}
 <section class="panel workflow-panel prompt-panel">
 	<div class="section-heading"><div><p class="eyebrow">تبادل با هوش مصنوعی</p><h2>پرامپت تحلیل آماده است</h2></div><span class="step-number">۰۲</span></div>
-	<p class="muted">متن زیر را در ابزار هوش مصنوعی وارد کنید. JSON برگشتی را در همین صفحه وارد کنید تا ساختار و شناسه‌ها بررسی شوند.</p>
+	<p class="muted">پرامپت زیر را در ابزار هوش مصنوعی وارد کنید. پاسخ را به‌صورت فایل Markdown با پسوند .md ذخیره کنید و در همین صفحه بارگذاری کنید یا محتوایش را وارد کنید تا ساختار و شناسه‌ها بررسی شوند.</p>
 	<div class="prompt-actions"><a class="button button-secondary" href="/analysis/{{ project.project_id }}/prompt.txt">دانلود فایل پرامپت</a><button class="button button-secondary" type="button" data-copy="#prompt-text">کپی پرامپت</button></div>
 	<textarea id="prompt-text" class="prompt-text" readonly rows="12">{{ prompt }}</textarea>
 	{% if error %}<div class="alert alert-error" role="alert">{{ error }}</div>{% endif %}
 	<form action="/analysis/{{ project.project_id }}/import" method="post" enctype="multipart/form-data" class="form-stack import-form">
-		<label>فایل JSON تحلیل<input type="file" name="analysis_file" accept=".json,application/json"></label>
-		<label>یا محتوای JSON را اینجا وارد کنید<textarea name="analysis_json" rows="8" dir="ltr" spellcheck="false" placeholder="{ &quot;schema_version&quot;: &quot;1.0&quot;, ... }"></textarea></label>
+		<label>فایل Markdown تحلیل<input type="file" name="analysis_file" accept=".md,.markdown,text/markdown,text/plain"></label>
+		<label>یا محتوای Markdown را اینجا وارد کنید<textarea name="analysis_markdown" rows="8" dir="ltr" spellcheck="false" placeholder="# HOOSHYAR\n\n```yaml\nschema_version: '2.0'\n...\n```"></textarea></label>
 		<button class="button button-primary" type="submit">اعتبارسنجی و ثبت تحلیل</button>
 	</form>
 </section>

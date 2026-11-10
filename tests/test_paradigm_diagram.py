@@ -2,7 +2,15 @@ from fastapi.testclient import TestClient
 
 from app.main import app
 from app.routers import results as results_router
-from app.services.paradigm_service import _build_paradigm_graph, prepare_paradigm_diagram
+from app.services.paradigm_service import (
+    _build_paradigm_graph,
+    prepare_paradigm_diagram,
+)
+from app.services.synthesis.final_diagram_service import (
+    _build_final_model_graph,
+    prepare_final_model_diagram,
+    render_final_model_diagram,
+)
 
 
 def make_project():
@@ -211,6 +219,158 @@ def test_graphviz_accepts_sample_legacy_field_names():
 	assert nodes["strategies"]["items"][0]["title"] == "راهبرد"
 	assert nodes["consequences"]["items"][0]["title"] == "پیامد"
 	assert nodes["categories"]["items"][0]["title"] == "مقوله اولیه"
+
+
+def test_final_model_diagram_keeps_empirical_edges_separate_from_layout_edges():
+	model = {
+		"model_version": 3,
+		"components": [
+			{"component_key": "causal_conditions", "node_ids": ["cause"]},
+			{"component_key": "central_phenomenon", "node_ids": ["central"]},
+			{"component_key": "contextual_conditions", "node_ids": []},
+			{"component_key": "intervening_conditions", "node_ids": []},
+			{"component_key": "action_interaction_strategies", "node_ids": []},
+			{"component_key": "consequences", "node_ids": ["outcome"]},
+		],
+		"nodes": [
+			{
+				"node_id": "cause",
+				"node_type": "theme",
+				"component_key": "causal_conditions",
+				"title": "شرایط آغازگر",
+				"definition": "تعریف علت",
+				"source_item_ids": ["source-1"],
+				"source_project_ids": ["project-1"],
+				"source_concept_ids": ["concept-1"],
+				"source_subcategory_ids": [],
+				"category_unit_ids": ["unit-1"],
+				"theme_id": "theme-1",
+				"evidence_ref_ids": ["evidence-1"],
+			},
+			{
+				"node_id": "central",
+				"node_type": "central_phenomenon",
+				"component_key": "central_phenomenon",
+				"title": "پدیده محوری",
+				"definition": "تعریف پدیده",
+				"source_item_ids": [],
+				"source_project_ids": ["project-1"],
+				"source_concept_ids": [],
+				"source_subcategory_ids": [],
+				"category_unit_ids": [],
+				"evidence_ref_ids": [],
+			},
+			{
+				"node_id": "outcome",
+				"node_type": "independent_category",
+				"component_key": "consequences",
+				"title": "پیامد",
+				"definition": "تعریف پیامد",
+				"source_item_ids": [],
+				"source_project_ids": ["project-1"],
+				"source_concept_ids": [],
+				"source_subcategory_ids": [],
+				"category_unit_ids": ["unit-2"],
+				"evidence_ref_ids": [],
+			},
+		],
+		"evidence_index": {
+			"evidence-1": {
+				"paragraph_id": "P1",
+				"evidence_text": "نقل‌قول",
+				"interpretation": "تفسیر",
+				"source_title": "مصاحبه ۱",
+			},
+		},
+		"edges": [{
+			"edge_id": "edge-1",
+			"relationship_id": "relation-1",
+			"source_node_id": "cause",
+			"target_node_id": "central",
+			"relationship_type": "hypothetical",
+			"direction": "target_to_source",
+			"description": "پیوند فرضی",
+			"reasoning": "استدلال",
+			"supporting_source_relationship_ids": ["source-relation-1"],
+			"evidence_ref_ids": ["evidence-1"],
+		}],
+	}
+
+	diagram = prepare_final_model_diagram(model)
+	assert len(diagram["nodes"]) == 6
+	assert len(diagram["entity_nodes"]) == 3
+	assert len(diagram["edges"]) == len(diagram["layout_edges"]) + 1
+	empirical = next(edge for edge in diagram["edges"] if not edge["structural"])
+	assert (empirical["source"], empirical["target"]) == ("central", "cause")
+	assert empirical["kind"] == "hypothetical"
+	assert empirical["evidence"][0]["exact_quote"] == "نقل‌قول"
+
+	source = _build_final_model_graph(diagram, "svg").source
+	assert "cluster_causal_conditions" in source
+	assert "model_node_0" in source
+	assert "style=dotted" in source
+	assert "anchor_causal_conditions -> anchor_central_phenomenon" in source
+	assert "anchor_causal_conditions -> anchor_central_phenomenon [constraint=true style=invis" in source
+	assert "model_node_1 -> model_node_0" in source
+	assert "hypothetical: پیوند فرضی" in source
+	assert "ساختاری / چیدمان" in source
+	assert "Vazirmatn" in source
+
+
+def test_final_diagram_exports_svg_and_png_from_the_model():
+	model = {
+		"model_version": 1,
+		"components": [
+			{"component_key": "causal_conditions", "title": "شرایط علّی", "node_ids": ["theme-1"]},
+			{"component_key": "central_phenomenon", "title": "پدیده محوری", "node_ids": ["central-1"]},
+			{"component_key": "contextual_conditions", "title": "شرایط زمینه‌ای", "node_ids": []},
+			{"component_key": "intervening_conditions", "title": "شرایط مداخله‌گر", "node_ids": []},
+			{"component_key": "action_interaction_strategies", "title": "راهبردها", "node_ids": []},
+			{"component_key": "consequences", "title": "پیامدها", "node_ids": ["unit-1"]},
+		],
+		"nodes": [
+			{
+				"node_id": "theme-1",
+				"node_type": "theme",
+				"component_key": "causal_conditions",
+				"title": "تم فارسی",
+				"definition": "تعریف فارسی تم",
+				"evidence_ref_ids": [],
+			},
+			{
+				"node_id": "central-1",
+				"node_type": "central_phenomenon",
+				"component_key": "central_phenomenon",
+				"title": "پدیده فارسی",
+				"definition": "تعریف پدیده",
+				"evidence_ref_ids": [],
+			},
+			{
+				"node_id": "unit-1",
+				"node_type": "independent_category",
+				"component_key": "consequences",
+				"title": "مقوله مستقل فارسی",
+				"definition": "تعریف مقوله",
+				"evidence_ref_ids": [],
+			},
+		],
+		"edges": [],
+		"evidence_index": {},
+	}
+	diagram = prepare_final_model_diagram(model)
+	assert len(diagram["nodes"]) == 6
+	assert [item["title"] for item in diagram["nodes"][0]["items"]] == ["تم فارسی"]
+	assert [item["title"] for item in diagram["nodes"][5]["items"]] == ["مقوله مستقل فارسی"]
+	assert all(not node["items"] for node in diagram["nodes"][2:5])
+	assert not [edge for edge in diagram["edges"] if not edge["structural"]]
+
+	svg = render_final_model_diagram(diagram, "svg")
+	png = render_final_model_diagram(diagram, "png")
+	assert b"<svg" in svg
+	assert "Vazirmatn".encode() in svg
+	assert "تم فارسی".encode() in svg
+	assert "مقوله مستقل فارسی".encode() in svg
+	assert png.startswith(b"\x89PNG\r\n\x1a\n")
 
 
 def test_paradigm_image_endpoint_returns_download(monkeypatch):

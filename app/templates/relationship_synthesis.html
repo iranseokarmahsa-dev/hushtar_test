@@ -1,0 +1,125 @@
+{% extends "base.html" %}
+{% block title %}تلفیق روابط | نظریه‌یار{% endblock %}
+{% block content %}
+<section class="page-heading">
+	<div><p class="eyebrow">فاز ششم · روابط</p><h1>تحلیل و بازبینی روابط</h1><p>Run: <code>{{ latest.run_id if latest else prompt.run_id if prompt else '' }}</code></p></div>
+	<div class="page-actions">
+		<a class="button button-secondary" href="/synthesis/runs">همه اجراها</a>
+		<a class="button button-secondary" href="/synthesis/runs/{{ latest.run_id if latest else prompt.run_id if prompt else '' }}/phenomenon-synthesis">پدیده محوری</a>
+		<a class="button button-secondary" href="/synthesis/runs/{{ latest.run_id if latest else prompt.run_id if prompt else '' }}/final-model">مدل نهایی</a>
+	</div>
+</section>
+{% if page_error %}<section class="panel warning-panel"><strong>تولید Prompt متوقف شد</strong><p>{{ page_error }}</p>{% if size_error_report %}<p>حجم Prompt: {{ size_error_report.prompt_chars }} / {{ size_error_report.max_prompt_chars }} نویسه.</p>{% endif %}</section>{% endif %}
+
+{% if prompt %}
+<section class="panel">
+	<h2>ورودی تأییدشده</h2>
+	<p>نسخه فاز پنجم: {{ prompt.source_phase_version }} · نسخه پدیده محوری: {{ prompt.phenomenon_version }} · نودها: {{ prompt.size_report.input_node_count }} · روابط مستقل: {{ prompt.size_report.source_relationship_count }}</p>
+	<label>Prompt مستقل Markdown<textarea id="relationship-prompt" rows="16" readonly>{{ prompt.prompt_text }}</textarea></label><button type="button" class="button button-secondary" data-copy-prompt>کپی Prompt</button>
+	<h3>ثبت پاسخ AI</h3>
+	<form method="post" action="/synthesis/runs/{{ prompt.run_id }}/relationship-synthesis/results" enctype="multipart/form-data">
+		<label>جای‌گذاری Markdown<textarea name="raw_output_text" rows="12" placeholder="# FINAL RELATIONSHIP RESULT"></textarea></label>
+		<label>یا فایل Markdown<input type="file" name="markdown_file" accept=".md,.markdown,text/markdown"></label><button class="button button-primary">Parse و اعتبارسنجی</button>
+	</form>
+</section>
+{% endif %}
+
+{% if latest %}
+<section class="panel">
+	<h2>آخرین نسخه: {{ latest.version }}</h2><p>وضعیت: {{ latest.status }} · تأیید: {{ latest.approval_status }} · فاز پنجم: {{ latest.source_phase_version }}{% if latest.stale %} · <strong>منقضی شده</strong>{% endif %}</p>
+	<details><summary>گزارش اعتبارسنجی</summary><pre>{{ latest.validation_report_text }}</pre></details>
+	<details><summary>تاریخچه تصمیم‌ها ({{ latest.researcher_edits_json.decisions|length if latest.researcher_edits_json else 0 }})</summary><ol>{% for item in latest.researcher_edits_json.decisions if latest.researcher_edits_json %}<li>{{ item.operation }} · {{ item.reason }} · {{ item.created_at }}</li>{% else %}<li>تصمیمی ثبت نشده است.</li>{% endfor %}</ol></details>
+	{% if latest.status == 'invalid' and not latest.stale %}<a class="button button-secondary" href="/synthesis/runs/{{ latest.run_id }}/relationship-synthesis/correction-prompt">Prompt اصلاحی</a>{% endif %}
+</section>
+{% endif %}
+
+{% if latest and latest.validation_report_json.valid and not latest.stale %}
+{% set result = latest.output_json %}
+{% set can_review = latest.approval_status != 'approved' %}
+<section class="panel">
+	<h2>نودهای مدل</h2>
+	{% for node in model_nodes %}<article class="review-card"><strong>{{ node.title }}</strong> · {{ node.component_key }} · <code>{{ node.node_id }}</code><p>{{ node.definition }}</p><p>شواهد: {% for evidence_id in node.evidence_ref_ids %}<code>{{ evidence_id }}</code> {% endfor %}</p></article>{% endfor %}
+
+	<h2>روابط پیشنهادی</h2>
+	{% for item in result.relationships %}
+	<article class="panel review-card">
+		<p><code>{{ item.source_node_id }}</code> → <code>{{ item.target_node_id }}</code> · {{ item.relationship_type }} / {{ item.direction }}</p>
+		<p>{{ item.description }}</p><p>{{ item.reasoning }}</p><p>وضعیت: {{ item.review_status }} · اطمینان AI: {{ item.confidence }}</p>
+		<p>منابع: {% for source_id in item.supporting_source_relationship_ids %}<code>{{ source_id }}</code> {% endfor %}{% for source_id in item.supporting_source_phenomenon_ids %}<code>{{ source_id }}</code> {% endfor %}{% for evidence_id in item.evidence_ref_ids %}<code>{{ evidence_id }}</code> {% endfor %}</p>
+		{% if can_review %}
+		<form class="phase-review-form">
+			<input type="hidden" name="decision" value="edit_relationship"><input type="hidden" name="target_id" value="{{ item.relationship_id }}">
+			<label>مبدأ<select name="source_node_id">{% for node in model_nodes %}<option value="{{ node.node_id }}" {% if node.node_id == item.source_node_id %}selected{% endif %}>{{ node.title }} ({{ node.component_key }})</option>{% endfor %}</select></label>
+			<label>مقصد<select name="target_node_id">{% for node in model_nodes %}<option value="{{ node.node_id }}" {% if node.node_id == item.target_node_id %}selected{% endif %}>{{ node.title }} ({{ node.component_key }})</option>{% endfor %}</select></label>
+			<label>نوع<select name="relationship_type">{% for value in ['direct','interpretive','hypothetical'] %}<option value="{{ value }}" {% if value == item.relationship_type %}selected{% endif %}>{{ value }}</option>{% endfor %}</select></label>
+			<label>جهت<select name="direction">{% for value in ['source_to_target','target_to_source','bidirectional'] %}<option value="{{ value }}" {% if value == item.direction %}selected{% endif %}>{{ value }}</option>{% endfor %}</select></label>
+			<label>شرح<input name="description" value="{{ item.description }}"></label><label>دلیل<textarea name="reasoning">{{ item.reasoning }}</textarea></label>
+			<label>شناسه رابطه‌های مستقل (با کاما)<input name="supporting_source_relationship_ids" value="{{ item.supporting_source_relationship_ids|join(',') }}" data-array></label>
+			<label>شناسه پدیده‌های مستقل<input name="supporting_source_phenomenon_ids" value="{{ item.supporting_source_phenomenon_ids|join(',') }}" data-array></label>
+			<label>شناسه Source Itemها<input name="supporting_source_item_ids" value="{{ item.supporting_source_item_ids|join(',') }}" data-array></label>
+			<label>شناسه Category Unitها<input name="supporting_category_unit_ids" value="{{ item.supporting_category_unit_ids|join(',') }}" data-array></label>
+			<label>شناسه شواهد<input name="evidence_ref_ids" value="{{ item.evidence_ref_ids|join(',') }}" data-array></label>
+			<label>دلیل اصلاح<input name="reason" required></label><button class="button button-secondary">ذخیره اصلاح</button>
+		</form>
+		<form class="phase-review-form"><input type="hidden" name="decision" value="approve_relationship"><input type="hidden" name="target_id" value="{{ item.relationship_id }}"><label>دلیل تأیید<input name="reason" required></label><button class="button button-primary">تأیید رابطه</button></form>
+		<form class="phase-review-form"><input type="hidden" name="decision" value="reject_relationship"><input type="hidden" name="target_id" value="{{ item.relationship_id }}"><label>دلیل رد<input name="reason" required></label><button class="button button-secondary">رد رابطه</button></form>
+		{% endif %}
+	</article>
+	{% else %}<p>رابطه پیشنهادی وجود ندارد؛ برای افزودن رابطه از فرم پایین استفاده کنید یا نودها را بدون رابطه تأیید کنید.</p>{% endfor %}
+
+	{% if can_review %}
+	<h3>افزودن رابطه پژوهشگر</h3>
+	<form class="phase-review-form">
+		<input type="hidden" name="decision" value="add_relationship">
+		<label>مبدأ<select name="source_node_id" required>{% for node in model_nodes %}<option value="{{ node.node_id }}">{{ node.title }} ({{ node.component_key }})</option>{% endfor %}</select></label>
+		<label>مقصد<select name="target_node_id" required>{% for node in model_nodes %}<option value="{{ node.node_id }}">{{ node.title }} ({{ node.component_key }})</option>{% endfor %}</select></label>
+		<label>نوع<select name="relationship_type"><option>direct</option><option>interpretive</option><option>hypothetical</option></select></label>
+		<label>جهت<select name="direction"><option>source_to_target</option><option>target_to_source</option><option>bidirectional</option></select></label>
+		<label>شرح<input name="description" required></label><label>دلیل<textarea name="reasoning" required></textarea></label>
+		<label>شناسه رابطه‌های مستقل<input name="supporting_source_relationship_ids" data-array></label>
+		<label>شناسه پدیده‌های مستقل<input name="supporting_source_phenomenon_ids" data-array></label>
+		<label>شناسه Source Itemها<input name="supporting_source_item_ids" data-array></label>
+		<label>شناسه Category Unitها<input name="supporting_category_unit_ids" data-array></label>
+		<label>شناسه شواهد<input name="evidence_ref_ids" data-array></label>
+		<label>دلیل افزودن<input name="reason" required></label><button class="button button-primary">افزودن برای بازبینی</button>
+	</form>
+	{% endif %}
+
+	<h3>نودهای بدون رابطه</h3>
+	{% for item in result.unlinked_nodes %}<article class="panel review-card"><p>{{ item.component_key }} · <code>{{ item.node_id }}</code></p><p>{{ item.reason }} · {{ item.review_status }}</p>
+		{% if can_review %}<form class="phase-review-form"><input type="hidden" name="decision" value="approve_unlinked"><input type="hidden" name="target_id" value="{{ item.node_id }}"><label>دلیل تأیید بدون رابطه<input name="reason" required></label><button class="button button-primary">تأیید نود بدون رابطه</button></form>{% endif %}
+	</article>{% else %}<p>همه نودها دست‌کم یک رابطه دارند.</p>{% endfor %}
+
+	<h3>تناقض‌ها</h3>
+	{% for item in result.contradictions %}<article class="panel review-card"><p>{{ item.description }}</p><p>{{ item.reasoning }}</p><p>وضعیت: {{ item.review_status }}</p>
+		{% if can_review %}<form class="phase-review-form"><input type="hidden" name="decision" value="edit_contradiction"><input type="hidden" name="target_id" value="{{ item.contradiction_id }}"><label>شرح<input name="description" value="{{ item.description }}"></label><label>دلیل<textarea name="reasoning">{{ item.reasoning }}</textarea></label><label>دلیل اصلاح<input name="reason" required></label><button class="button button-secondary">اصلاح تناقض</button></form>
+		<form class="phase-review-form"><input type="hidden" name="decision" value="approve_contradiction"><input type="hidden" name="target_id" value="{{ item.contradiction_id }}"><label>دلیل تأیید<input name="reason" required></label><button class="button button-primary">تأیید تناقض</button></form>
+		<form class="phase-review-form"><input type="hidden" name="decision" value="dismiss_contradiction"><input type="hidden" name="target_id" value="{{ item.contradiction_id }}"><label>دلیل رد<input name="reason" required></label><button class="button button-secondary">رد تناقض</button></form>{% endif %}
+	</article>{% else %}<p>تناقضی گزارش نشده است.</p>{% endfor %}
+	{% if can_review %}<form class="phase-review-form"><input type="hidden" name="decision" value="approve_final"><label>دلیل تأیید نهایی<input name="reason" required></label><button class="button button-primary">تأیید نهایی روابط</button></form>{% endif %}
+</section>
+{% endif %}
+{% endblock %}
+{% block scripts %}
+<script>
+	const copyButton = document.querySelector('[data-copy-prompt]');
+	if (copyButton) copyButton.addEventListener('click', async function () {
+		await navigator.clipboard.writeText(document.getElementById('relationship-prompt').value);
+		copyButton.textContent = 'کپی شد';
+	});
+	document.querySelectorAll('.phase-review-form').forEach(function (form) {
+		form.addEventListener('submit', async function (event) {
+			event.preventDefault();
+			const payload = Object.fromEntries(new FormData(form).entries());
+			form.querySelectorAll('[data-array]').forEach(function (field) {
+				payload[field.name] = field.value.split(',').map(function (item) { return item.trim(); }).filter(Boolean);
+			});
+			const response = await fetch(window.location.pathname + '/review', {
+				method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(payload)
+			});
+			if (!response.ok) { const result = await response.json(); alert(result.detail || 'ثبت تصمیم ناموفق بود.'); return; }
+			window.location.reload();
+		});
+	});
+</script>
+{% endblock %}

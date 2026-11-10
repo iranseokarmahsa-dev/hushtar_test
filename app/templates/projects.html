@@ -3,11 +3,71 @@
 {% block content %}
 <section class="page-heading">
 	<div><p class="eyebrow">آرشیو پژوهش</p><h1>تاریخچه پروژه‌ها</h1></div>
-	<a class="button button-primary" href="/">بارگذاری مصاحبه جدید</a>
+	<div class="page-actions">
+		<a class="button button-secondary" href="/synthesis/select">انتخاب برای تحلیل تلفیقی</a>
+		<a class="button button-secondary" href="/synthesis/runs">اجراهای تلفیقی</a>
+		<a class="button button-primary" href="/">بارگذاری مصاحبه جدید</a>
+	</div>
 </section>
 {% if projects %}
-<section class="panel table-panel"><div class="table-scroll"><table><thead><tr><th>عنوان</th><th>موضوع</th><th>پاراگراف</th><th>مفهوم</th><th>وضعیت</th><th></th></tr></thead><tbody>
-{% for project in projects %}<tr><td><a class="table-link" href="/projects/{{ project.project_id }}">{{ project.title }}</a><small class="table-sub">{{ project.created_at[:10] }}</small></td><td>{{ project.topic or '—' }}</td><td>{{ project.paragraphs|length }}</td><td>{{ project.concepts|length }}</td><td><span class="status-pill">{% if project.analysis %}تحلیل آماده{% elif project.paragraphs %}آماده ساخت پرامپت{% else %}بدون مصاحبه{% endif %}</span></td><td><a class="icon-link" href="/projects/{{ project.project_id }}" aria-label="بازکردن پروژه">←</a></td></tr>{% endfor %}
-</tbody></table></div></section>
+<section class="panel table-panel">
+	<form method="post" action="/synthesis/runs" class="selection-form">
+		<div class="selection-toolbar">
+			<div class="selection-fields">
+				<label>عنوان تحلیل تلفیقی
+					<input type="text" name="title" placeholder="مثلاً تحلیل تلفیقی تجربه‌های کاری" required>
+				</label>
+				<label>موضوع پژوهش
+					<input type="text" name="study_topic" placeholder="موضوع مشترک پژوهش" required>
+				</label>
+				<label class="checkbox-field">
+					<input type="checkbox" name="confirm_shared_topic" value="on">
+					<span>موضوع مصاحبه‌های انتخاب‌شده یکسان است و قصد ادامه تحلیل تلفیقی را دارم.</span>
+				</label>
+			</div>
+			<div class="selection-actions">
+				<button type="button" class="button button-secondary" data-select-all>انتخاب همه</button>
+				<button type="button" class="button button-secondary" data-clear-all>لغو انتخاب همه</button>
+				<button type="submit" class="button button-primary">ایجاد اجرای تلفیقی</button>
+			</div>
+		</div>
+		<div class="table-scroll"><table><thead><tr><th>انتخاب</th><th>عنوان</th><th>موضوع</th><th>تاریخ</th><th>وضعیت تحلیل</th><th>تأیید پژوهشگر</th><th>وضعیت آمادگی</th><th>عملیات</th></tr></thead><tbody>
+		{% for project in projects %}
+		{% set project_eligibility = eligibility.get(project.project_id, {'eligible': false, 'reason': 'نامشخص'}) %}
+		<tr>
+			<td><input type="checkbox" name="selected_ids" value="{{ project.project_id }}" {% if not project_eligibility.eligible %}disabled{% endif %}></td>
+			<td><a class="table-link" href="/projects/{{ project.project_id }}">{{ project.title }}</a></td>
+			<td>{{ project.topic or '—' }}</td>
+			<td>{{ project.created_at[:10] }}</td>
+			<td>{% if project.analysis %}{% if project.analysis.analysis_status == 'complete' %}تحلیل کامل{% else %}تحلیل تک‌مصاحبه‌ای ناتمام{% endif %}{% elif project.paragraphs %}آماده ساخت پرامپت{% else %}بدون مصاحبه{% endif %}</td>
+			<td>{% if (project.researcher_edits or {}).get('interview_analysis', {}).get('confirmed') %}تأیید شده{% else %}در انتظار{% endif %}</td>
+			<td><span class="status-pill {% if project_eligibility.eligible and project_eligibility.status == 'مجاز' %}success{% else %}warning{% endif %}">{% if project_eligibility.eligible %}{{ project_eligibility.status }}{% else %}نیازمند تکمیل{% endif %}</span><small class="table-sub">{{ project_eligibility.reason }}</small>{% if project.analysis and project.analysis.schema_version == '2.0' %}<small class="table-sub"><a href="/results/{{ project.project_id }}/concept-review">بازبینی مفاهیم</a> · <a href="/results/{{ project.project_id }}/interview-analysis">تأیید تحلیل</a></small>{% endif %}</td>
+			<td class="row-actions">
+				<a class="icon-link" href="/projects/{{ project.project_id }}" aria-label="بازکردن پروژه">←</a>
+				<button class="button button-danger" type="submit" formaction="/projects/{{ project.project_id }}/delete" formmethod="post" formnovalidate onclick="return confirm('این مصاحبه و اطلاعات آن از تاریخچه حذف شود؟');">حذف</button>
+			</td>
+		</tr>
+		{% endfor %}
+		</tbody></table></div>
+	</form>
+</section>
 {% else %}<section class="panel empty-state"><strong>هنوز پروژه‌ای در تاریخچه نیست</strong><p>برای شروع، فایل مصاحبهٔ خود را بارگذاری کنید.</p><a class="button button-primary" href="/">بارگذاری فایل</a></section>{% endif %}
+<script>
+	const selectAllButton = document.querySelector('[data-select-all]');
+	const clearAllButton = document.querySelector('[data-clear-all]');
+	if (selectAllButton) {
+		selectAllButton.addEventListener('click', function () {
+			document.querySelectorAll('input[name="selected_ids"]').forEach(function (checkbox) {
+				if (!checkbox.disabled) checkbox.checked = true;
+			});
+		});
+	}
+	if (clearAllButton) {
+		clearAllButton.addEventListener('click', function () {
+			document.querySelectorAll('input[name="selected_ids"]').forEach(function (checkbox) {
+				checkbox.checked = false;
+			});
+		});
+	}
+</script>
 {% endblock %}

@@ -500,6 +500,19 @@ td { color: #3d4944; }
 .paradigm-relationship > summary > strong { direction: ltr; }
 .paradigm-relationship-details { padding-top: 8px; color: var(--muted); font-size: 11px; }
 .paradigm-relationship-details > p { margin: 5px 0; }
+.final-paradigm-component { align-content: start; }
+.final-paradigm-component .paradigm-node-heading { font-size: 13px; }
+.final-paradigm-component .paradigm-node-items { gap: 4px; }
+.paradigm-entity-node { width: 100%; padding: 7px 0 0; border: 0; border-top: 1px solid rgba(57, 78, 64, .18); background: transparent; color: var(--ink); font: inherit; text-align: right; cursor: pointer; }
+.paradigm-entity-node:hover { background: #f5f8f5; }
+.paradigm-entity-node:focus-visible { outline: 2px solid #426e59; outline-offset: 2px; }
+.paradigm-entity-node small { display: block; }
+.final-paradigm-legend .legend-dashed { border-top-style: dashed; border-color: #456c55; }
+.final-paradigm-legend .legend-dotted { border-top-style: dotted; border-color: #927127; }
+.final-paradigm-legend .legend-structural { border-top-style: dotted; border-color: #8a918c; }
+.final-model-relationship.is-direct { border-right: 3px solid #222; }
+.final-model-relationship.is-interpretive { border-right: 3px dashed #456c55; }
+.final-model-relationship.is-hypothetical { border-right: 3px dotted #927127; }
 
 @media (max-width: 900px) {
   .paradigm-workspace { grid-template-columns: minmax(0, 1fr); }

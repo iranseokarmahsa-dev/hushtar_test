@@ -4,8 +4,10 @@ Qualitative interpretation is performed by the external AI workflow and reviewed
 by the researcher; this service does not independently code interview data.
 """
 
-import json
+import re
 from typing import Any
+
+import yaml
 
 from app.services.json_validator import validate_analysis
 from app.services.prompt_builder import build_prompt
@@ -78,12 +80,21 @@ def _map_concept_review(item: dict[str, Any]) -> dict[str, Any]:
 	}
 
 
-def parse_analysis_json(raw_json: str, project: dict[str, Any]) -> dict[str, Any]:
-	try:
-		payload = json.loads(raw_json)
-	except json.JSONDecodeError as error:
-		raise ValueError(f"JSON معتبر نیست: {error.msg} (سطر {error.lineno})") from error
-	if not isinstance(payload, dict):
-		raise ValueError("ریشه‌ی JSON باید یک شیء باشد.")
+
+def parse_analysis_markdown(raw_markdown: str, project: dict[str, Any]) -> dict[str, Any]:
+	payload = load_analysis_markdown(raw_markdown)
 	validate_analysis(payload, project)
+	return payload
+
+
+def load_analysis_markdown(raw_markdown: str) -> dict[str, Any]:
+	blocks = re.findall(r"```yaml\s*\n(.*?)```", raw_markdown, flags=re.IGNORECASE | re.DOTALL)
+	if len(blocks) != 1:
+		raise ValueError("پاسخ باید دقیقاً یک بلوک ```yaml داشته باشد.")
+	try:
+		payload = yaml.safe_load(blocks[0])
+	except yaml.YAMLError as error:
+		raise ValueError(f"ساختار YAML داخل Markdown معتبر نیست: {error}") from error
+	if not isinstance(payload, dict):
+		raise ValueError("ریشه‌ی بلوک YAML باید یک نگاشت باشد.")
 	return payload

@@ -1,15 +1,14 @@
 """Prompt generation and AI result import routes."""
 
-import json
-
 from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import PlainTextResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from urllib.parse import urlencode
 
 from app.core.database import get_project, update_project
+from app.repositories.synthesis_repository import mark_synthesis_runs_stale_for_source
 from app.services.docx_parser import build_quality_report
-from app.services.analysis_service import parse_analysis_json, prepare_prompt
+from app.services.analysis_service import load_analysis_markdown, parse_analysis_markdown, prepare_prompt
 
 router = APIRouter(prefix="/analysis", tags=["analysis"])
 templates = Jinja2Templates(directory="app/templates")
@@ -56,23 +55,24 @@ def download_prompt(project_id: str):
 async def import_analysis(
 	project_id: str,
 	analysis_file: UploadFile | None = File(None),
-	analysis_json: str = Form(""),
+	analysis_markdown: str = Form(""),
 ):
 	project = _project_or_404(project_id)
-	raw_json = analysis_json
+	raw_markdown = analysis_markdown
 	if analysis_file and analysis_file.filename:
 		content = await analysis_file.read(5 * 1024 * 1024 + 1)
 		if len(content) > 5 * 1024 * 1024:
-			raise HTTPException(status_code=413, detail="حجم JSON باید کمتر از ۵ مگابایت باشد.")
-		raw_json = content.decode("utf-8-sig")
+			raise HTTPException(status_code=413, detail="حجم فایل Markdown باید کمتر از ۵ مگابایت باشد.")
+		raw_markdown = content.decode("utf-8-sig")
 	try:
-		raw_result = json.loads(raw_json)
-		result = parse_analysis_json(raw_json, project)
+		raw_result = load_analysis_markdown(raw_markdown)
+		result = parse_analysis_markdown(raw_markdown, project)
 	except (ValueError, UnicodeDecodeError) as error:
 		return RedirectResponse(
 			f"/analysis/{project_id}?{urlencode({'error': str(error)[:300]})}", status_code=303
 		)
 	update_project(project_id, analysis=result, raw_analysis=raw_result)
+	mark_synthesis_runs_stale_for_source(project_id)
 	if result.get("schema_version") == "2.0":
 		return RedirectResponse(f"/results/{project_id}/concept-review", status_code=303)
 	return RedirectResponse(f"/results/{project_id}", status_code=303)

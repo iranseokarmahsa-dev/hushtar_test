@@ -6,6 +6,7 @@ from graphviz.backend import ExecutableNotFound
 from fastapi.templating import Jinja2Templates
 
 from app.core.database import get_project, update_project
+from app.repositories.synthesis_repository import mark_synthesis_runs_stale_for_source
 from app.services.analysis_service import prepare_analysis_results
 from app.services.paradigm_service import prepare_paradigm_diagram, render_paradigm_diagram
 
@@ -48,8 +49,24 @@ def concept_review_page(request: Request, project_id: str):
 		return project
 	stored_edits = project.get("researcher_edits") or {}
 	review_edits = stored_edits.get("concept_reviews", {})
+	concepts_by_id = {
+		item["concept_id"]: item for item in project.get("concepts", [])
+		if item.get("concept_id")
+	}
+	paragraphs_by_id = {
+		item["paragraph_id"]: item for item in project.get("paragraphs", [])
+		if item.get("paragraph_id")
+	}
 	reviews = [
-		{"review": review, "edit": review_edits.get(review["concept_id"], {})}
+		{
+			"review": review,
+			"edit": review_edits.get(review["concept_id"], {}),
+			"source_paragraphs": [
+				paragraphs_by_id[paragraph_id]
+				for paragraph_id in concepts_by_id.get(review["concept_id"], {}).get("paragraph_ids", [])
+				if paragraph_id in paragraphs_by_id
+			],
+		}
 		for review in project["analysis"]["concept_reviews"]
 	]
 	return templates.TemplateResponse(
@@ -87,6 +104,7 @@ def save_concept_review(
 		for concept_id, title, code, note in zip(concept_ids, suggested_concepts, suggested_codes, researcher_notes)
 	}
 	update_project(project_id, researcher_edits=updated_edits)
+	mark_synthesis_runs_stale_for_source(project_id)
 	return RedirectResponse(f"/results/{project_id}/concept-review?saved=1", status_code=303)
 
 
@@ -176,6 +194,7 @@ def save_interview_analysis(
 		"confirmed": confirmed,
 	}
 	update_project(project_id, researcher_edits=updated_edits)
+	mark_synthesis_runs_stale_for_source(project_id)
 	return RedirectResponse(f"/results/{project_id}/interview-analysis?saved=1", status_code=303)
 
 

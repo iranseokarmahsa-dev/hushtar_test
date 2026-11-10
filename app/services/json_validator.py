@@ -26,7 +26,7 @@ def _validate_combined_analysis(payload: dict[str, Any], project: dict[str, Any]
 	if errors:
 		first_error = errors[0]
 		location = ".".join(str(part) for part in first_error.path) or "root"
-		raise ValueError(f"ساختار JSON نامعتبر است ({location}): {first_error.message}")
+		raise ValueError(f"ساختار خروجی نامعتبر است ({location}): {first_error.message}")
 	for section, section_path in (
 		(payload["concept_reviews"], CONCEPT_REVIEW_SCHEMA_PATH),
 		(payload["interview_analysis"], INTERVIEW_ANALYSIS_SCHEMA_PATH),
@@ -39,7 +39,7 @@ def _validate_combined_analysis(payload: dict[str, Any], project: dict[str, Any]
 		if section_errors:
 			first_error = section_errors[0]
 			location = ".".join(str(part) for part in first_error.path) or "section"
-			raise ValueError(f"ساختار JSON نامعتبر است ({location}): {first_error.message}")
+			raise ValueError(f"ساختار خروجی نامعتبر است ({location}): {first_error.message}")
 
 	if payload["project_id"] != project["project_id"]:
 		raise ValueError("شناسه پروژه در JSON با پروژه انتخاب‌شده مطابقت ندارد.")
@@ -171,7 +171,7 @@ def _validate_legacy_analysis(payload: dict[str, Any], project: dict[str, Any]) 
 	if errors:
 		first_error = errors[0]
 		location = ".".join(str(part) for part in first_error.path) or "root"
-		raise ValueError(f"ساختار JSON نامعتبر است ({location}): {first_error.message}")
+		raise ValueError(f"ساختار خروجی نامعتبر است ({location}): {first_error.message}")
 
 	if payload["project_id"] != project["project_id"]:
 		raise ValueError("شناسه پروژه در JSON با پروژه انتخاب‌شده مطابقت ندارد.")

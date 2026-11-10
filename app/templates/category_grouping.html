@@ -1,0 +1,214 @@
+{% extends "base.html" %}
+{% block title %}گروه‌بندی معنایی | نظریه‌یار{% endblock %}
+{% block content %}
+<section class="page-heading">
+	<div><p class="eyebrow">فاز چهارم · گروه‌بندی معنایی</p><h1>گروه‌بندی مقوله‌های تلفیقی</h1><p>Run: <code>{{ latest.run_id if latest else prompt.run_id if prompt else '' }}</code></p></div>
+	<div class="page-actions"><a class="button button-secondary" href="/synthesis/runs">همه اجراها</a>{% if latest and latest.approval_status == 'approved' %}<a class="button button-primary" href="/synthesis/runs/{{ latest.run_id }}/theme-synthesis">فاز پنجم: استخراج تم</a>{% endif %}</div>
+</section>
+
+{% if page_error %}
+<section class="panel warning-panel"><strong>تولید Prompt متوقف شد</strong><p>{{ page_error }}</p>
+{% if size_error_report %}
+<p>حجم Prompt: {{ size_error_report.prompt_chars }} نویسه؛ سقف: {{ size_error_report.max_prompt_chars }} نویسه؛ پاسخ تخمینی: {{ size_error_report.estimated_response_chars }} نویسه.</p>
+<ul>{% for key, size in size_error_report.component_chars.items() %}<li>{{ key }}: {{ size }} نویسه</li>{% endfor %}</ul>
+{% endif %}
+</section>
+{% endif %}
+
+{% if prompt %}
+<section class="panel">
+	<h2>اندازه و محدوده درخواست</h2>
+	<p>تعداد Source Item: {{ prompt.source_item_count }} · تعداد منابع Run: {{ prompt.size_report.source_count }} · حجم کل Prompt: {{ prompt.size_report.prompt_chars }} نویسه · پاسخ تخمینی: {{ prompt.size_report.estimated_response_chars }} نویسه</p>
+	<div class="table-scroll"><table><thead><tr><th>مؤلفه</th><th>حجم داده</th></tr></thead><tbody>
+	{% for key, size in prompt.size_report.component_chars.items() %}<tr><td>{{ key }}</td><td>{{ size }} نویسه</td></tr>{% endfor %}
+	</tbody></table></div>
+	<label>Prompt مستقل Markdown
+		<textarea id="grouping-prompt" rows="18" readonly>{{ prompt.prompt_text }}</textarea>
+	</label>
+	<button type="button" class="button button-secondary" data-copy-prompt>کپی Prompt</button>
+</section>
+<section class="panel">
+	<h2>ثبت پاسخ ChatGPT</h2>
+	<p>پاسخ خام عیناً و مستقل از اصلاحات پژوهشگر ذخیره می‌شود. هیچ Batch خودکاری ساخته نمی‌شود.</p>
+	<form method="post" action="/synthesis/runs/{{ prompt.run_id }}/category-grouping/results" enctype="multipart/form-data">
+		<label>جای‌گذاری خروجی Markdown
+			<textarea name="raw_output_text" rows="14" placeholder="# CATEGORY GROUPING RESULT"></textarea>
+		</label>
+		<label>یا بارگذاری فایل Markdown
+			<input type="file" name="markdown_file" accept=".md,.markdown,text/markdown">
+		</label>
+		<button class="button button-primary" type="submit">Parse و اعتبارسنجی خروجی</button>
+	</form>
+</section>
+{% endif %}
+
+{% if latest %}
+<section class="panel">
+	<h2>آخرین نسخه: {{ latest.version }}</h2>
+	<p>وضعیت: {{ latest.status }} · تأیید: {{ latest.approval_status }}{% if latest.stale %} · <strong>منقضی شده</strong>{% endif %}</p>
+	<details><summary>گزارش اعتبارسنجی</summary><pre>{{ latest.validation_report_text }}</pre></details>
+	{% if latest.status == 'invalid' and not latest.stale %}
+		<a class="button button-secondary" href="/synthesis/runs/{{ latest.run_id }}/category-grouping/correction-prompt">دریافت Prompt اصلاحی Markdown</a>
+	{% endif %}
+</section>
+{% endif %}
+
+{% if latest and latest.validation_report_json.valid and not latest.stale %}
+{% set grouping = latest.output_json %}
+{% set can_review = latest.approval_status != 'approved' %}
+<section class="panel">
+	<h2>بازبینی پژوهشگر</h2>
+	<p>گروه‌بندی پیشنهادی فقط پس از تأیید پژوهشگر نهایی می‌شود. Source Itemهای مستقل نیز باید تأیید یا با دلیل مستثنا شوند.</p>
+	{% for component_key, component in grouping.component_results.items() %}
+	<section class="review-component">
+		<h3>{{ component_key }}</h3>
+		{% for group in component.groups %}
+		<article class="panel review-card">
+			<h4>{{ group.proposed_category_name }}</h4>
+			<p>{{ group.definition }}</p>
+			<p><strong>دلیل:</strong> {{ group.reasoning }}</p>
+			<p><strong>شباهت‌ها:</strong> {{ group.similarities|join('، ') if group.similarities else 'ندارد' }}</p>
+			<p><strong>تفاوت‌ها:</strong> {{ group.differences|join('، ') if group.differences else 'ندارد' }}</p>
+			<p>شناسه پایدار: <code>{{ group.group_id }}</code> · وضعیت: {{ group.review_status }}</p>
+			<ul>{% for item_id in group.source_item_ids %}
+				{% set item = source_items.get(item_id, {}) %}
+				<li>{{ item.researcher_approved_category_name or item.original_category_name or item_id }} — {{ item.source_title or '' }} · {{ item.source_project_id or '' }} · <code>{{ item_id }}</code></li>
+			{% endfor %}</ul>
+			<p><strong>شواهد:</strong></p>
+			<ul>{% for evidence_id in group.evidence_ref_ids %}
+				{% set evidence = evidence_by_id.get(evidence_id, {}) %}
+				<li><code>{{ evidence_id }}</code> · {{ evidence.source_title or evidence.source_project_id or '' }} · {{ evidence.paragraph_id or '' }}<blockquote>{{ evidence.quote or 'متن شاهد موجود نیست' }}</blockquote></li>
+			{% else %}<li>شاهد ارجاع‌شده ندارد.</li>{% endfor %}</ul>
+			{% if can_review %}
+			<form class="review-action" data-review-form>
+				<input type="hidden" name="decision" value="edit_group"><input type="hidden" name="group_id" value="{{ group.group_id }}">
+				<label>عنوان پیشنهادی<input name="proposed_category_name" value="{{ group.proposed_category_name }}"></label>
+				<label>تعریف مفهومی<textarea name="definition" rows="2">{{ group.definition }}</textarea></label>
+				<label>دلیل تصمیم پژوهشگر<input name="reason" required></label>
+				<button class="button button-secondary" type="submit">ذخیره و نیازمند تأیید مجدد</button>
+			</form>
+			<form class="review-action" data-review-form>
+				<input type="hidden" name="decision" value="approve_group"><input type="hidden" name="group_id" value="{{ group.group_id }}">
+				<label>دلیل تأیید<input name="reason" required></label>
+				<button class="button button-primary" type="submit">تأیید گروه</button>
+			</form>
+			<form class="review-action" data-review-form>
+				<input type="hidden" name="decision" value="reject_group"><input type="hidden" name="group_id" value="{{ group.group_id }}">
+				<label>دلیل رد<input name="reason" required></label>
+				<button class="button button-secondary" type="submit">رد و انتقال اعضا به مستقل</button>
+			</form>
+			<form class="review-action" data-review-form data-split-form>
+				<input type="hidden" name="decision" value="split_group"><input type="hidden" name="group_id" value="{{ group.group_id }}">
+				<label>تقسیم: در هر خط شناسه‌های یک گروه جدید را با کاما جدا کنید؛ تک‌عضوها مستقل می‌شوند
+					<textarea name="partitions_text" rows="2" placeholder="id-1,id-2&#10;id-3,id-4"></textarea>
+				</label>
+				<label>دلیل تقسیم<input name="reason" required></label>
+				<button class="button button-secondary" type="submit">تقسیم گروه</button>
+			</form>
+			{% endif %}
+		</article>
+		{% else %}<p>گروهی پیشنهاد نشده است.</p>{% endfor %}
+
+		{% if can_review and component.groups|length > 1 %}
+		<form class="review-action" data-review-form>
+			<h4>ادغام دو گروه در همین مؤلفه</h4>
+			<label>گروه حفظ‌شونده<select name="group_id">{% for group in component.groups %}<option value="{{ group.group_id }}">{{ group.proposed_category_name }}</option>{% endfor %}</select></label>
+			<label>گروه ادغام‌شونده<select name="target_group_id">{% for group in component.groups %}<option value="{{ group.group_id }}">{{ group.proposed_category_name }}</option>{% endfor %}</select></label>
+			<label>عنوان نهایی اختیاری<input name="proposed_category_name"></label>
+			<label>تعریف نهایی اختیاری<textarea name="definition" rows="2"></textarea></label>
+			<label>دلیل ادغام<input name="reason" required></label>
+			<button class="button button-secondary" type="submit" onclick="return confirm('ادغام دو گروه ثبت شود؟')">ادغام</button>
+		</form>
+		{% endif %}
+
+		<h4>مقوله‌های مستقل</h4>
+		{% for standalone in component.standalone_source_items %}
+			{% set item = source_items.get(standalone.source_item_id, {}) %}
+			<div class="review-card">
+				<p>{{ item.researcher_approved_category_name or item.original_category_name or standalone.source_item_id }} — <code>{{ standalone.source_item_id }}</code> · {{ standalone.review_status }}</p>
+				<p>منبع: {{ item.source_title or '' }} · {{ item.source_project_id or '' }} · تعریف: {{ item.definition or '' }}</p>
+				<ul>{% for reference in item.evidence_refs or [] %}
+					{% set evidence = evidence_by_id.get(reference.evidence_ref_id, {}) %}
+					<li><code>{{ reference.evidence_ref_id }}</code> <blockquote>{{ evidence.quote or 'متن شاهد موجود نیست' }}</blockquote></li>
+				{% endfor %}</ul>
+				{% if can_review %}
+				<form class="review-action" data-review-form>
+					<input type="hidden" name="source_item_id" value="{{ standalone.source_item_id }}">
+					<label>دلیل تصمیم<input name="reason" required></label>
+					<button class="button button-primary" name="decision" value="approve_standalone">تأیید به‌عنوان مستقل</button>
+					<button class="button button-secondary" name="decision" value="exclude_source_item">استثنا با دلیل</button>
+				</form>
+				{% endif %}
+			</div>
+		{% else %}<p>مقوله مستقل وجود ندارد.</p>{% endfor %}
+		<h4>تناقض‌ها و ابهام‌های گزارش‌شده</h4>
+		{% for contradiction in component.contradictions %}
+			<div class="review-card">
+				<p><strong>{{ contradiction.description }}</strong></p><p>{{ contradiction.reasoning }}</p>
+				<p>Source Itemها: {% for item_id in contradiction.source_item_ids %}<code>{{ item_id }}</code>{% if not loop.last %}، {% endif %}{% endfor %}</p>
+				<ul>{% for evidence_id in contradiction.evidence_ref_ids %}
+					{% set evidence = evidence_by_id.get(evidence_id, {}) %}
+					<li><code>{{ evidence_id }}</code> · {{ evidence.source_title or '' }} <blockquote>{{ evidence.quote or 'متن شاهد موجود نیست' }}</blockquote></li>
+				{% else %}<li>شاهد ارجاع‌شده ندارد.</li>{% endfor %}</ul>
+			</div>
+		{% else %}<p>تناقض گزارش نشده است.</p>{% endfor %}
+	</section>
+	{% endfor %}
+
+	{% if can_review %}
+	<section class="panel">
+		<h3>انتقال Source Item</h3>
+		<form class="review-action" data-review-form>
+			<input type="hidden" name="decision" value="move_item">
+			<label>شناسه Source Item<input name="source_item_id" required></label>
+			<label>شناسه گروه مقصد<input name="target_group_id" required></label>
+			<label>دلیل انتقال<input name="reason" required></label>
+			<button class="button button-secondary" type="submit">انتقال</button>
+		</form>
+	</section>
+	<form class="review-action" data-review-form>
+		<input type="hidden" name="decision" value="approve_final">
+		<label>دلیل تأیید نهایی<input name="reason" required></label>
+		<button class="button button-primary" type="submit" onclick="return confirm('تأیید نهایی این نسخه انجام شود؟')">تأیید نهایی فاز چهارم</button>
+	</form>
+	{% endif %}
+</section>
+{% endif %}
+{% endblock %}
+
+{% block scripts %}
+<script>
+	const copyButton = document.querySelector('[data-copy-prompt]');
+	if (copyButton) {
+		copyButton.addEventListener('click', async function () {
+			await navigator.clipboard.writeText(document.getElementById('grouping-prompt').value);
+			copyButton.textContent = 'کپی شد';
+		});
+	}
+	document.querySelectorAll('[data-review-form]').forEach(function (form) {
+		form.addEventListener('submit', async function (event) {
+			event.preventDefault();
+			const formData = new FormData(form, event.submitter);
+			const payload = Object.fromEntries(formData.entries());
+			if (form.dataset.splitForm !== undefined) {
+				payload.partitions = String(payload.partitions_text || '').split(/\r?\n/)
+					.map(function (line) { return line.split(',').map(function (item) { return item.trim(); }).filter(Boolean); })
+					.filter(function (members) { return members.length; })
+					.map(function (source_item_ids) { return {source_item_ids: source_item_ids}; });
+				delete payload.partitions_text;
+			}
+			const response = await fetch(window.location.pathname + '/review', {
+				method: 'POST',
+				headers: {'Content-Type': 'application/json'},
+				body: JSON.stringify(payload)
+			});
+			const result = await response.json();
+			if (!response.ok) {
+				alert(result.detail || 'ثبت تصمیم ناموفق بود.');
+				return;
+			}
+			window.location.reload();
+		});
+	});
+</script>
+{% endblock %}

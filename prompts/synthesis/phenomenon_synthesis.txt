@@ -1,0 +1,37 @@
+# درخواست تحلیل پدیده محوری نهایی
+
+## نقش
+پدیده‌های محوری تأییدشده مصاحبه‌های Run و نودهای تأییدشده پنج مؤلفه را برای پیشنهاد یک پدیده محوری تلفیقی تحلیل کن.
+
+## محدوده و اصول
+1. فقط از اطلاعات Markdown ورودی استفاده کن. داده‌ای را از بیرون اضافه نکن.
+2. تمام پدیده‌های محوری مستقل را بررسی و تفاوت‌ها، شباهت‌ها و موارد ناسازگارشان را حفظ کن.
+3. پدیده محوری نهایی را بر پایه قدرت تبیین، انسجام مفهومی و شواهد انتخاب کن؛ فراوانی واژه یا مقوله به‌تنهایی کافی نیست.
+4. از نودهای مدل، تم‌ها، Category Unitها، Source Itemها، پدیده‌های محوری و شواهد فقط با شناسه‌های ورودی ارجاع بده.
+5. شناسه موقت پیشنهاد را در `phenomenon_id` با قالب `AI_PHENOMENON_001` بساز؛ این شناسه به‌معنای شناسه پایدار نیست.
+6. پدیده یا ادعای جدیدی خارج از مفهوم مستند نساز. عنوان و تعریف باید از داده فراتر نروند.
+7. گزینه‌های جایگزین قابل دفاع و محدودیت هر گزینه را حذف نکن.
+8. تناقض‌ها را با شناسه‌های واقعی و دلیل روشن گزارش کن.
+9. نقل‌قول را در پاسخ تکرار نکن؛ فقط Evidence ID را ذکر کن.
+10. اگر پشتوانه کافی نیست، این محدودیت را صریح بنویس و اطمینان را متناسب کاهش بده.
+11. نتیجه AI پیشنهاد است و تصمیم نهایی را پژوهشگر می‌گیرد.
+12. زنجیره تفکر داخلی تولید نکن؛ فقط دلایل کوتاه و قابل ارزیابی ارائه کن.
+
+## فراداده
+- run_id: {{RUN_ID}}
+- stage_key: phenomenon_synthesis
+- input_hash: {{INPUT_HASH}}
+- source_phase_version: {{SOURCE_PHASE_VERSION}}
+
+{{INPUT_MARKDOWN}}
+
+## قرارداد پاسخ
+یک سند Markdown کامل و مستقل، بدون توضیح بیرون از قالب زیر تولید کن. عنوان‌ها و ترتیب فیلدها ثابت‌اند. برای بخش یا فهرست خالی `NONE` بگذار.
+
+در METADATA به‌ترتیب: `schema_version`, `run_id`, `stage_key`, `input_hash`, `source_phase_version`.
+در CENTRAL PHENOMENON به‌ترتیب: `phenomenon_id`, `title`, `definition`, `selection_reason`, `supporting_node_ids`, `supporting_source_item_ids`, `supporting_category_unit_ids`, `supporting_theme_ids`, `supporting_source_phenomenon_ids`, `evidence_ref_ids`, `confidence`, `needs_researcher_review`.
+برای هر گزینه جایگزین به‌ترتیب: `alternative_id`, `title`, `definition`, `supporting_node_ids`, `supporting_source_item_ids`, `supporting_category_unit_ids`, `supporting_theme_ids`, `supporting_source_phenomenon_ids`, `evidence_ref_ids`, `strengths`, `limitations`, `selection_comparison`, `confidence`, `needs_researcher_review`.
+برای هر تناقض به‌ترتیب: `contradiction_id`, `source_phenomenon_ids`, `node_ids`, `source_item_ids`, `evidence_ref_ids`, `description`, `reasoning`, `needs_researcher_review`.
+در QUALITY AUDIT به‌ترتیب: `input_source_count`, `input_phenomenon_count`, `reviewed_source_phenomenon_ids`, `reviewed_node_ids`, `input_theme_count`, `input_category_unit_count`, `supporting_reference_count`, `missing_supporting_references`, `unsupported_claims`, `contradictions`, `analysis_limitations`, `final_status`. در دو فهرست مرور، هر شناسه ورودی را دقیقاً یک‌بار ثبت کن.
+
+{{FORMAT_CONTRACT}}

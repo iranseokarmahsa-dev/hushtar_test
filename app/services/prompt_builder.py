@@ -1,10 +1,16 @@
 """Build the versioned grounded-theory prompt from a project record."""
 
-import json
 from pathlib import Path
 from typing import Any
 
+import yaml
+
 PROMPT_PATH = Path(__file__).resolve().parents[2] / "prompts" / "grounded_theory_v2.txt"
+
+
+class _PromptSafeDumper(yaml.SafeDumper):
+	def ignore_aliases(self, data: Any) -> bool:
+		return True
 
 
 def build_prompt(project: dict[str, Any]) -> str:
@@ -48,4 +54,5 @@ def build_prompt(project: dict[str, Any]) -> str:
 		"concepts": concepts,
 	}
 	prompt = PROMPT_PATH.read_text(encoding="utf-8")
-	return prompt.replace("{{INPUT_DATA_JSON}}", json.dumps(input_data, ensure_ascii=False, indent=2))
+	input_yaml = yaml.dump(input_data, Dumper=_PromptSafeDumper, allow_unicode=True, sort_keys=False, width=1000)
+	return prompt.replace("{{INPUT_DATA_MARKDOWN}}", f"```yaml\n{input_yaml}```")

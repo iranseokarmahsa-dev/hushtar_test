@@ -1,17 +1,21 @@
-import json
 import sqlite3
 from urllib.parse import parse_qs, urlparse
 
 from fastapi.testclient import TestClient
 import pytest
+import yaml
 
 from app.core import database
 from app.main import app
 from app.routers import analysis as analysis_router
 from app.routers import projects as projects_router
 from app.routers import results as results_router
-from app.services.analysis_service import parse_analysis_json
+from app.services.analysis_service import parse_analysis_markdown
 from app.services.prompt_builder import build_prompt
+
+
+def as_markdown(payload):
+	return f"# HOOSHYAR Analysis\n\n```yaml\n{yaml.safe_dump(payload, allow_unicode=True, sort_keys=False)}```\n"
 
 
 def make_project_and_output():
@@ -106,7 +110,7 @@ def make_project_and_output():
 	return project, output
 
 
-def test_v2_json_upload_separates_pages_and_persists_researcher_edits(monkeypatch):
+def test_v2_markdown_upload_separates_pages_and_persists_researcher_edits(monkeypatch):
 	project, output = make_project_and_output()
 	category = output["interview_analysis"]["categories"][0]
 	category["subcategories"] = [{
@@ -178,7 +182,7 @@ def test_v2_json_upload_separates_pages_and_persists_researcher_edits(monkeypatc
 
 	response = client.post(
 		"/analysis/project-v2/import",
-		files={"analysis_file": ("answer.json", json.dumps(output, ensure_ascii=False).encode(), "application/json")},
+		files={"analysis_file": ("answer.md", as_markdown(output).encode(), "text/markdown")},
 	)
 	assert response.status_code == 303
 	assert response.headers["location"] == "/results/project-v2/concept-review"
@@ -188,6 +192,7 @@ def test_v2_json_upload_separates_pages_and_persists_researcher_edits(monkeypatc
 	assert "بازبینی مفاهیم پژوهشگر" in concept_page.text
 	assert "تحلیل مستقل مصاحبه" not in concept_page.text
 	assert "فشار کاری زیاد است" in concept_page.text
+	assert "مدیر گفت: فشار کاری زیاد است." in concept_page.text
 
 	saved_concepts = client.post(
 		"/results/project-v2/concept-review",
@@ -250,19 +255,21 @@ def test_v2_json_upload_separates_pages_and_persists_researcher_edits(monkeypatc
 def test_v2_prompt_includes_interview_id_and_two_part_contract():
 	project, output = make_project_and_output()
 	prompt = build_prompt(project)
-	assert '"interview_id": "project-v2"' in prompt
-	assert '"schema_version": "2.0"' in prompt
+	assert "interview_id: project-v2" in prompt
+	assert "schema_version: '2.0'" in prompt
 	assert "concept_reviews" in prompt and "interview_analysis" in prompt
-	assert '"subcategory_ids": ["SUB01"]' in prompt
-	assert '"subcategories": [{"subcategory_id": "SUB01"' in prompt
-	assert parse_analysis_json(json.dumps(output, ensure_ascii=False), project)
+	assert "موجز و وفادار به معنای متن" in prompt
+	assert "متن کامل تک‌تک پاراگراف‌ها را بخوانید" in prompt
+	assert "subcategory_ids:" in prompt
+	assert "subcategory_name: عنوان زیرمقوله" in prompt
+	assert parse_analysis_markdown(as_markdown(output), project)
 
 
 def test_v2_rejects_quotes_not_found_in_the_source():
 	project, output = make_project_and_output()
 	output["concept_reviews"][0]["evidence"][0]["exact_quote"] = "نقل‌قول ساختگی"
 	with pytest.raises(ValueError, match="عیناً در متن پاراگراف پیدا نشد"):
-		parse_analysis_json(json.dumps(output, ensure_ascii=False), project)
+		parse_analysis_markdown(as_markdown(output), project)
 
 
 def test_v2_rejects_unknown_relationship_categories():
@@ -279,7 +286,7 @@ def test_v2_rejects_unknown_relationship_categories():
 		"needs_researcher_review": True,
 	}]
 	with pytest.raises(ValueError, match="شناسه‌ی ارجاع‌شده وجود ندارد"):
-		parse_analysis_json(json.dumps(output, ensure_ascii=False), project)
+		parse_analysis_markdown(as_markdown(output), project)
 
 
 def test_v2_incomplete_output_reports_unreviewed_concepts():
@@ -301,7 +308,7 @@ def test_v2_incomplete_output_reports_unreviewed_concepts():
 		"missing_data_detected": True,
 		"final_status": "incomplete",
 	})
-	parsed = parse_analysis_json(json.dumps(output, ensure_ascii=False), project)
+	parsed = parse_analysis_markdown(as_markdown(output), project)
 	assert parsed["analysis_status"] == "incomplete"
 
 
@@ -318,7 +325,7 @@ def test_v2_import_accepts_central_phenomenon_researcher_review_item(monkeypatch
 	monkeypatch.setattr(analysis_router, "update_project", lambda _project_id, **changes: project.update(changes) or project)
 	response = TestClient(app, follow_redirects=False).post(
 		"/analysis/project-v2/import",
-		files={"analysis_file": ("answer.json", json.dumps(output, ensure_ascii=False).encode(), "application/json")},
+		files={"analysis_file": ("answer.md", as_markdown(output).encode(), "text/markdown")},
 	)
 	assert response.status_code == 303
 	assert response.headers["location"] == "/results/project-v2/concept-review"
@@ -333,7 +340,7 @@ def test_v2_import_downgrades_quality_warnings_and_preserves_raw_output(monkeypa
 	monkeypatch.setattr(analysis_router, "update_project", lambda _project_id, **changes: project.update(changes) or project)
 	response = TestClient(app, follow_redirects=False).post(
 		"/analysis/project-v2/import",
-		files={"analysis_file": ("answer.json", json.dumps(output, ensure_ascii=False).encode(), "application/json")},
+		files={"analysis_file": ("answer.md", as_markdown(output).encode(), "text/markdown")},
 	)
 	assert response.status_code == 303
 	assert project["analysis"]["analysis_status"] == "incomplete"
@@ -345,7 +352,7 @@ def test_v2_import_downgrades_quality_warnings_and_preserves_raw_output(monkeypa
 	assert "خروجی برای بازبینی ذخیره شد، اما کامل نیست" in page.text
 	assert '<th scope="col">مفهوم</th>' in page.text
 	assert '<th scope="col">کدگذاری</th>' in page.text
-	assert "عنوان پیشنهادی · قابل ویرایش" in page.text
+	assert "پیشنهاد موجزتر/دقیق‌تر · قابل ویرایش" in page.text
 	assert 'name="suggested_concepts"' in page.text
 	assert 'name="suggested_codes"' in page.text
 
@@ -361,7 +368,7 @@ def test_v2_accepts_matching_subcategory_ids():
 		"evidence": [],
 	}]
 	category["subcategory_ids"] = ["SUB01"]
-	parsed = parse_analysis_json(json.dumps(output, ensure_ascii=False), project)
+	parsed = parse_analysis_markdown(as_markdown(output), project)
 	assert parsed["interview_analysis"]["categories"][0]["subcategory_ids"] == ["SUB01"]
 	assert parsed["interview_analysis"]["categories"][0]["subcategories"] == category["subcategories"]
 
@@ -376,7 +383,7 @@ def test_v2_derives_subcategory_ids_when_the_optional_field_is_missing():
 		"concept_ids": ["C001"],
 		"evidence": [],
 	}]
-	parsed = parse_analysis_json(json.dumps(output, ensure_ascii=False), project)
+	parsed = parse_analysis_markdown(as_markdown(output), project)
 	assert parsed["interview_analysis"]["categories"][0]["subcategory_ids"] == ["SUB01"]
 
 
@@ -392,7 +399,7 @@ def test_v2_rejects_mismatched_subcategory_ids_without_dropping_source_data():
 	}]
 	category["subcategory_ids"] = ["SUB02"]
 	with pytest.raises(ValueError, match="subcategory_ids.*با شناسه‌های subcategories"):
-		parse_analysis_json(json.dumps(output, ensure_ascii=False), project)
+		parse_analysis_markdown(as_markdown(output), project)
 	assert category["subcategories"][0]["subcategory_id"] == "SUB01"
 
 
@@ -424,7 +431,7 @@ def test_v2_rejects_subcategory_id_owned_by_another_category():
 	})
 	output["interview_analysis"]["categories"].append(other_category)
 	with pytest.raises(ValueError, match="تعلق دارد، نه مقوله"):
-		parse_analysis_json(json.dumps(output, ensure_ascii=False), project)
+		parse_analysis_markdown(as_markdown(output), project)
 
 
 def test_v2_import_mismatch_preserves_previously_saved_analysis(monkeypatch):
@@ -444,7 +451,7 @@ def test_v2_import_mismatch_preserves_previously_saved_analysis(monkeypatch):
 	monkeypatch.setattr(analysis_router, "update_project", lambda *_args, **_kwargs: pytest.fail("Rejected JSON must not be stored"))
 	response = TestClient(app, follow_redirects=False).post(
 		"/analysis/project-v2/import",
-		files={"analysis_file": ("mismatch.json", json.dumps(output, ensure_ascii=False).encode(), "application/json")},
+		files={"analysis_file": ("mismatch.md", as_markdown(output).encode(), "text/markdown")},
 	)
 	message = parse_qs(urlparse(response.headers["location"]).query)["error"][0]
 	assert response.status_code == 303

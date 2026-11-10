@@ -26,6 +26,7 @@ def _connect() -> sqlite3.Connection:
 	connection = sqlite3.connect(DATABASE_PATH, timeout=15)
 	connection.row_factory = sqlite3.Row
 	connection.execute("PRAGMA journal_mode=WAL")
+	connection.execute("PRAGMA foreign_keys = ON")
 	return connection
 
 
@@ -58,6 +59,78 @@ def init_db() -> None:
 			)
 		if "raw_analysis_json" not in columns:
 			connection.execute("ALTER TABLE projects ADD COLUMN raw_analysis_json TEXT")
+
+		connection.execute(
+			"""CREATE TABLE IF NOT EXISTS synthesis_runs (
+				run_id TEXT PRIMARY KEY,
+				title TEXT NOT NULL,
+				study_topic TEXT NOT NULL DEFAULT '',
+				expected_source_count INTEGER NOT NULL DEFAULT 0,
+				selected_source_count INTEGER NOT NULL DEFAULT 0,
+				status TEXT NOT NULL DEFAULT 'draft',
+				current_stage TEXT NOT NULL DEFAULT 'source_selection',
+				schema_version TEXT NOT NULL DEFAULT '1.0',
+				input_hash TEXT NOT NULL DEFAULT '',
+				created_at TEXT NOT NULL,
+				updated_at TEXT NOT NULL,
+				completed_at TEXT
+			)"""
+		)
+		connection.execute(
+			"""CREATE TABLE IF NOT EXISTS synthesis_run_sources (
+				id INTEGER PRIMARY KEY AUTOINCREMENT,
+				run_id TEXT NOT NULL,
+				source_project_id TEXT NOT NULL,
+				source_title TEXT NOT NULL,
+				source_hash TEXT NOT NULL,
+				snapshot_json TEXT NOT NULL,
+				source_order INTEGER NOT NULL,
+				created_at TEXT NOT NULL,
+				UNIQUE(run_id, source_project_id),
+				FOREIGN KEY(run_id) REFERENCES synthesis_runs(run_id) ON DELETE CASCADE
+			)"""
+		)
+		connection.execute(
+			"""CREATE TABLE IF NOT EXISTS synthesis_stage_results (
+				stage_result_id TEXT PRIMARY KEY,
+				run_id TEXT NOT NULL,
+				stage_key TEXT NOT NULL,
+				component_key TEXT NOT NULL,
+				version INTEGER NOT NULL,
+				status TEXT NOT NULL DEFAULT 'draft',
+				input_hash TEXT NOT NULL DEFAULT '',
+				prompt_text TEXT NOT NULL DEFAULT '',
+				raw_output_text TEXT NOT NULL DEFAULT '',
+				output_json TEXT NOT NULL DEFAULT '{}',
+				validation_report_json TEXT NOT NULL DEFAULT '{}',
+				validation_report_text TEXT NOT NULL DEFAULT '',
+				source_phase_version INTEGER,
+				researcher_edits_json TEXT NOT NULL DEFAULT '{}',
+				approval_status TEXT NOT NULL DEFAULT 'pending',
+				created_at TEXT NOT NULL,
+				updated_at TEXT NOT NULL,
+				approved_at TEXT,
+				UNIQUE(run_id, stage_key, component_key, version),
+				FOREIGN KEY(run_id) REFERENCES synthesis_runs(run_id) ON DELETE CASCADE
+			)"""
+		)
+		stage_result_columns = {
+			row["name"] for row in connection.execute("PRAGMA table_info(synthesis_stage_results)")
+		}
+		if "validation_report_text" not in stage_result_columns:
+			connection.execute(
+				"ALTER TABLE synthesis_stage_results ADD COLUMN validation_report_text TEXT NOT NULL DEFAULT ''"
+			)
+		if "source_phase_version" not in stage_result_columns:
+			connection.execute(
+				"ALTER TABLE synthesis_stage_results ADD COLUMN source_phase_version INTEGER"
+			)
+		connection.execute(
+			"CREATE INDEX IF NOT EXISTS idx_synthesis_run_sources_run_id ON synthesis_run_sources(run_id, source_order)"
+		)
+		connection.execute(
+			"CREATE INDEX IF NOT EXISTS idx_synthesis_stage_results_run_id ON synthesis_stage_results(run_id, stage_key, component_key, version)"
+		)
 
 
 def _decode(row: sqlite3.Row | None) -> dict[str, Any] | None:

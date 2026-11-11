@@ -19,7 +19,7 @@ def _project_or_404(project_id: str):
 	if project is None:
 		raise HTTPException(status_code=404, detail="پروژه پیدا نشد.")
 	if not project.get("analysis"):
-		raise HTTPException(status_code=409, detail="هنوز تحلیل JSON برای این پروژه ثبت نشده است.")
+		raise HTTPException(status_code=409, detail="هنوز تحلیل دو مرحله‌ای برای این پروژه ثبت نشده است.")
 	return project
 
 

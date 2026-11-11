@@ -92,9 +92,16 @@ def test_accepts_valid_markdown_and_source_evidence(project, analysis):
 
 
 @pytest.mark.parametrize("raw_markdown", ["No YAML payload", "```yaml\na: 1\n```\n```yaml\nb: 2\n```"])
-def test_requires_exactly_one_yaml_block(project, raw_markdown):
-	with pytest.raises(ValueError, match="دقیقاً یک بلوک"):
+def test_rejects_non_yaml_and_multiple_yaml_blocks(project, raw_markdown):
+	message = "ریشه" if raw_markdown == "No YAML payload" else "فقط یک بلوک"
+	with pytest.raises(ValueError, match=message):
 		parse_analysis_markdown(raw_markdown, project)
+
+
+def test_accepts_raw_yaml_without_markdown_fence(project, analysis):
+	raw_yaml = yaml.safe_dump(analysis, allow_unicode=True, sort_keys=False)
+	parsed = parse_analysis_markdown(raw_yaml, project)
+	assert parsed["concept_reviews"][0]["concept_id"] == "C0001"
 
 
 def test_rejects_malformed_yaml_block(project):
@@ -108,10 +115,13 @@ def test_rejects_modified_original_title(project, analysis):
 		parse_analysis_markdown(as_markdown(analysis), project)
 
 
-def test_rejects_quote_not_found_in_transcript(project, analysis):
+def test_quote_not_found_in_transcript_is_a_warning(project, analysis):
 	analysis["concept_reviews"][0]["evidence"][0]["exact_quote"] = "عبارت ساختگی"
-	with pytest.raises(ValueError, match="عیناً در متن پاراگراف پیدا نشد"):
-		parse_analysis_markdown(as_markdown(analysis), project)
+	parsed = parse_analysis_markdown(as_markdown(analysis), project)
+	assert parsed["analysis_status"] == "incomplete"
+	assert parsed["quality_audit"]["all_evidence_verifiable"] is False
+	assert parsed["quality_audit"]["evidence_warnings"][0]["status"] == "unmatched"
+	assert parsed["concept_reviews"][0]["needs_researcher_review"] is True
 
 
 def test_evidence_interpretation_is_required(project, analysis):
@@ -121,7 +131,7 @@ def test_evidence_interpretation_is_required(project, analysis):
 		parse_analysis_markdown(as_markdown(analysis), project)
 
 
-def test_category_evidence_is_checked_against_the_transcript(project, analysis):
+def test_category_evidence_mismatch_is_reported_instead_of_raising(project, analysis):
 	analysis["categories"] = [{
 		"category_id": "CAT01",
 		"category_name": "مقوله",
@@ -140,8 +150,9 @@ def test_category_evidence_is_checked_against_the_transcript(project, analysis):
 	}]
 	analysis["analysis_metadata"]["total_categories"] = 1
 
-	with pytest.raises(ValueError, match="عیناً در متن پاراگراف پیدا نشد"):
-		parse_analysis_markdown(as_markdown(analysis), project)
+	parsed = parse_analysis_markdown(as_markdown(analysis), project)
+	assert parsed["quality_audit"]["evidence_warnings"][0]["status"] == "unmatched"
+	assert parsed["analysis_status"] == "incomplete"
 
 
 def test_evidence_arrays_anywhere_require_all_three_fields(project, analysis):

@@ -18,6 +18,7 @@ JSON_FIELDS = {
 	"raw_analysis": "raw_analysis_json",
 	"researcher_edits": "researcher_edits_json",
 	"processing_issues": "processing_issues_json",
+	"stage_outputs": "stage_outputs_json",
 }
 
 
@@ -35,7 +36,8 @@ def init_db() -> None:
 		connection.execute(
 			"""CREATE TABLE IF NOT EXISTS projects (
 				project_id TEXT PRIMARY KEY,
-				title TEXT NOT NULL,
+						interview_id TEXT NOT NULL DEFAULT '',
+						title TEXT NOT NULL,
 				topic TEXT NOT NULL DEFAULT '',
 				created_at TEXT NOT NULL,
 				updated_at TEXT NOT NULL,
@@ -45,10 +47,13 @@ def init_db() -> None:
 				analysis_json TEXT,
 				raw_analysis_json TEXT,
 				researcher_edits_json TEXT NOT NULL DEFAULT '{}',
-				processing_issues_json TEXT NOT NULL DEFAULT '[]'
+				processing_issues_json TEXT NOT NULL DEFAULT '[]',
+				stage_outputs_json TEXT NOT NULL DEFAULT '{}'
 			)"""
 		)
 		columns = {row["name"] for row in connection.execute("PRAGMA table_info(projects)")}
+		if "interview_id" not in columns:
+			connection.execute("ALTER TABLE projects ADD COLUMN interview_id TEXT NOT NULL DEFAULT ''")
 		if "processing_issues_json" not in columns:
 			connection.execute(
 				"ALTER TABLE projects ADD COLUMN processing_issues_json TEXT NOT NULL DEFAULT '[]'"
@@ -59,6 +64,8 @@ def init_db() -> None:
 			)
 		if "raw_analysis_json" not in columns:
 			connection.execute("ALTER TABLE projects ADD COLUMN raw_analysis_json TEXT")
+		if "stage_outputs_json" not in columns:
+			connection.execute("ALTER TABLE projects ADD COLUMN stage_outputs_json TEXT NOT NULL DEFAULT '{}'")
 
 		connection.execute(
 			"""CREATE TABLE IF NOT EXISTS synthesis_runs (
@@ -171,7 +178,7 @@ def list_projects() -> list[dict[str, Any]]:
 
 def update_project(project_id: str, **changes: Any) -> dict[str, Any] | None:
 	init_db()
-	allowed = {"title", "topic", "source_filename", *JSON_FIELDS}
+	allowed = {"title", "topic", "interview_id", "source_filename", *JSON_FIELDS}
 	if not changes or changes.keys() - allowed:
 		raise ValueError("Invalid project fields")
 	assignments = []

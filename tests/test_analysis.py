@@ -12,7 +12,7 @@ from app.main import app
 from app.routers import results as results_router
 from app.services.analysis_service import prepare_analysis_results
 from app.services.export_service import create_excel, create_word_report
-from app.services.prompt_builder import build_prompt
+from app.services.prompt_builder import build_prompt, build_prompts
 
 
 def test_prompt_contains_project_ids_and_interview_text():
@@ -23,20 +23,20 @@ def test_prompt_contains_project_ids_and_interview_text():
 	}
 	prompt = build_prompt(project)
 	assert "project-1" in prompt and "شاهد مصاحبه" in prompt and "C0001" in prompt
-	assert "## نخستین و اصلی‌ترین وظیفه" in prompt
-	assert "متن کامل هر پاراگراف را بخوانید" in prompt
-	assert "فایل Markdown با پسوند `.md`" in prompt
-	assert "دقیقاً شامل یک عنوان کوتاه Markdown" in prompt
-	assert "هر شاهد دارای paragraph_id، exact_quote و interpretation باشد" in prompt
+	assert "## وظیفه" in prompt
+	assert "متن کامل پاراگراف پشتیبان" in prompt
+	assert "خروجی فقط YAML معتبر باشد" in prompt
 	input_markdown = prompt.split("## داده‌های پروژه", 1)[1]
 	input_yaml = re.search(r"```yaml\s*\n(.*?)```", input_markdown, flags=re.DOTALL)
 	assert input_yaml
 	input_data = yaml.safe_load(input_yaml.group(1))
 	assert "&id" not in prompt and "*id" not in prompt
-	assert input_data["concepts"][0]["supporting_paragraphs"][0]["text"] == "شاهد مصاحبه"
 	assert input_data["paragraphs"][0]["concepts"] == [
 		{"concept_id": "C0001", "title": "مفهوم", "initial_code": "کد"}
 	]
+	stage2 = build_prompts(project)["stage2"].split("## داده‌های پروژه", 1)[1]
+	assert "initial_code" not in stage2
+	assert "concept_reviews" not in stage2
 
 
 def test_exports_are_valid_office_files():

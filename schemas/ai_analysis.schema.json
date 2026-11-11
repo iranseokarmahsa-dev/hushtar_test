@@ -265,7 +265,9 @@
         "contradictions_detected": {"type": "boolean"},
         "missing_data_detected": {"type": "boolean"},
         "analysis_limitations": {"type": "array", "items": {"type": "string"}},
-        "final_status": {"enum": ["complete", "incomplete"]}
+        "final_status": {"enum": ["complete", "incomplete"]},
+        "evidence_warnings": {"$ref": "#/$defs/evidenceWarnings"},
+        "record_errors": {"$ref": "#/$defs/recordErrors"}
       }
     }
   },
@@ -281,6 +283,38 @@
           "exact_quote": {"type": "string", "minLength": 1},
           "interpretation": {"type": "string", "minLength": 1}
         }
+      }
+    },
+    "evidenceWarnings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["stage", "record_type", "record_id", "paragraph_id", "exact_quote", "status", "similarity"],
+        "properties": {
+          "stage": {"enum": ["stage1", "stage2"]},
+          "record_type": {"type": "string"},
+          "record_id": {"type": "string"},
+          "paragraph_id": {"type": "string"},
+          "exact_quote": {"type": "string"},
+          "status": {"enum": ["fuzzy_match", "unmatched", "paragraph_not_found", "paragraph_not_assigned"]},
+          "similarity": {"type": ["integer", "null"], "minimum": 0, "maximum": 100}
+        },
+        "additionalProperties": false
+      }
+    },
+    "recordErrors": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["stage", "record_type", "record_id", "reason"],
+        "properties": {
+          "stage": {"enum": ["stage1", "stage2"]},
+          "record_type": {"type": "string"},
+          "record_id": {"type": "string"},
+          "reason": {"type": "string"},
+          "parent_category_id": {"type": "string"}
+        },
+        "additionalProperties": false
       }
     }
   },

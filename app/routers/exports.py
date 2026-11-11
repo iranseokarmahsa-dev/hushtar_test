@@ -6,7 +6,7 @@ from fastapi import APIRouter, HTTPException
 from fastapi.responses import Response
 
 from app.core.database import get_project
-from app.services.export_service import create_excel, create_word_report
+from app.services.export_service import create_excel, create_markdown_report, create_word_report
 
 router = APIRouter(prefix="/exports", tags=["exports"])
 
@@ -16,7 +16,7 @@ def _project_or_404(project_id: str):
 	if project is None:
 		raise HTTPException(status_code=404, detail="پروژه پیدا نشد.")
 	if not project.get("analysis"):
-		raise HTTPException(status_code=409, detail="ابتدا تحلیل JSON را وارد کنید.")
+		raise HTTPException(status_code=409, detail="ابتدا خروجی هر دو مرحله تحلیل را وارد کنید.")
 	return project
 
 
@@ -38,3 +38,12 @@ def export_word(project_id: str):
 	project = _project_or_404(project_id)
 	return Response(create_word_report(project), media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document", headers={"Content-Disposition": f'attachment; filename="report-{project_id[:8]}.docx"'})
 
+
+@router.get("/{project_id}/analysis.md")
+def export_markdown(project_id: str):
+	project = _project_or_404(project_id)
+	return Response(
+		create_markdown_report(project),
+		media_type="text/markdown; charset=utf-8",
+		headers={"Content-Disposition": f'attachment; filename="analysis-{project_id[:8]}.md"'},
+	)

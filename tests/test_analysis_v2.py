@@ -124,8 +124,28 @@ def test_v2_markdown_upload_separates_pages_and_persists_researcher_edits(monkey
 			"interpretation": "شاهد زیرمقوله است.",
 		}],
 	}]
-	category["properties"] = [{"property_name": "شدت", "description": "میزان فشار گزارش‌شده."}]
-	category["dimensions"] = [{"property_name": "شدت", "dimension_range": "کم تا زیاد", "evidence": []}]
+	category["properties"] = [{
+		"property_id": "CAT01_PROP01",
+		"property_name": "شدت",
+		"description": "میزان فشار گزارش‌شده.",
+		"concept_ids": ["C001"],
+		"evidence": [{
+			"paragraph_id": "P001",
+			"exact_quote": "فشار کاری زیاد است",
+			"interpretation": "شاهد ویژگی است.",
+		}],
+	}]
+	category["dimensions"] = [{
+		"property_id": "CAT01_PROP01",
+		"property_name": "شدت",
+		"dimension_range": "کم تا زیاد",
+		"concept_ids": ["C001"],
+		"evidence": [{
+			"paragraph_id": "P001",
+			"exact_quote": "فشار کاری زیاد است",
+			"interpretation": "شاهد دامنه این ویژگی است.",
+		}],
+	}]
 	output["interview_analysis"]["paradigm_model"]["causal_conditions"] = [{
 		"category_id": "CAT01",
 		"concept_ids": ["C001"],
@@ -164,10 +184,9 @@ def test_v2_markdown_upload_separates_pages_and_persists_researcher_edits(monkey
 		"confidence": 0.75,
 		"needs_researcher_review": True,
 	}
-	output["interview_analysis"]["paradigm_model"]["central_phenomenon"] = {
-		"category_id": "CAT01",
-		"title": "مدیریت فشار کاری",
-	}
+	output["interview_analysis"]["paradigm_model"]["central_phenomenon"] = dict(
+		output["interview_analysis"]["central_phenomenon"]
+	)
 	monkeypatch.setattr(analysis_router, "get_project", lambda _: project)
 	monkeypatch.setattr(results_router, "get_project", lambda _: project)
 	monkeypatch.setattr(projects_router, "get_project", lambda _: project)
@@ -252,24 +271,18 @@ def test_v2_markdown_upload_separates_pages_and_persists_researcher_edits(monkey
 	assert "/results/project-v2/interview-analysis" in project_page.text
 
 
-def test_v2_prompt_includes_interview_id_and_two_part_contract():
+def test_v2_combined_legacy_markdown_remains_importable():
 	project, output = make_project_and_output()
-	prompt = build_prompt(project)
-	assert "interview_id: project-v2" in prompt
-	assert "schema_version: '2.0'" in prompt
-	assert "concept_reviews" in prompt and "interview_analysis" in prompt
-	assert "موجز و وفادار به معنای متن" in prompt
-	assert "متن کامل تک‌تک پاراگراف‌ها را بخوانید" in prompt
-	assert "subcategory_ids:" in prompt
-	assert "subcategory_name: عنوان زیرمقوله" in prompt
+	assert "interview_id: project-v2" in build_prompt(project)
 	assert parse_analysis_markdown(as_markdown(output), project)
 
 
-def test_v2_rejects_quotes_not_found_in_the_source():
+def test_v2_quote_mismatch_is_reported_without_rejecting_the_analysis():
 	project, output = make_project_and_output()
 	output["concept_reviews"][0]["evidence"][0]["exact_quote"] = "نقل‌قول ساختگی"
-	with pytest.raises(ValueError, match="عیناً در متن پاراگراف پیدا نشد"):
-		parse_analysis_markdown(as_markdown(output), project)
+	parsed = parse_analysis_markdown(as_markdown(output), project)
+	assert parsed["analysis_status"] == "incomplete"
+	assert parsed["interview_analysis"]["quality_audit"]["evidence_warnings"][0]["status"] == "unmatched"
 
 
 def test_v2_rejects_unknown_relationship_categories():

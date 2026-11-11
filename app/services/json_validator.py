@@ -6,6 +6,8 @@ from typing import Any
 
 from jsonschema import Draft202012Validator
 
+from app.services.evidence_validation import collect_evidence_warnings
+
 SCHEMA_DIR = Path(__file__).resolve().parents[2] / "schemas"
 SCHEMA_PATH = SCHEMA_DIR / "ai_analysis.schema.json"
 COMBINED_SCHEMA_PATH = SCHEMA_DIR / "ai_combined_output.schema.json"
@@ -21,6 +23,13 @@ def validate_analysis(payload: dict[str, Any], project: dict[str, Any]) -> None:
 
 
 def _validate_combined_analysis(payload: dict[str, Any], project: dict[str, Any]) -> None:
+	interview_analysis = payload.get("interview_analysis", {})
+	interview_analysis.setdefault("unclassified_concepts", [])
+	model = interview_analysis.get("paradigm_model", {})
+	analysis_center = interview_analysis.get("central_phenomenon")
+	if isinstance(model, dict):
+		model["central_phenomenon"] = analysis_center
+	interview_analysis.get("quality_audit", {}).setdefault("evidence_warnings", [])
 	schema = json.loads(COMBINED_SCHEMA_PATH.read_text(encoding="utf-8"))
 	errors = sorted(Draft202012Validator(schema).iter_errors(payload), key=lambda error: list(error.path))
 	if errors:
@@ -74,13 +83,7 @@ def _validate_combined_analysis(payload: dict[str, Any], project: dict[str, Any]
 		if review["original_code"] != source["original_code"]:
 			raise ValueError(f"کد اولیه مفهوم {review['concept_id']} با داده پژوهشگر تغییر کرده است.")
 		if review["paragraph_id"] not in source["paragraph_ids"]:
-			raise ValueError(f"شناسه پاراگراف مفهوم {review['concept_id']} با منبع آن مطابقت ندارد.")
-		for evidence in review["evidence"]:
-			paragraph_id = evidence["paragraph_id"]
-			if paragraph_id not in source["paragraph_ids"]:
-				raise ValueError(f"شاهد مفهوم {review['concept_id']} از پاراگراف مرتبط با آن نیست.")
-			if evidence["exact_quote"] not in paragraph_text[paragraph_id]:
-				raise ValueError(f"نقل‌قول مفهوم {review['concept_id']} عیناً در متن پاراگراف پیدا نشد.")
+			review["needs_researcher_review"] = True
 
 	interview_analysis = payload["interview_analysis"]
 	category_ids = [item["category_id"] for item in interview_analysis["categories"]]
@@ -103,7 +106,29 @@ def _validate_combined_analysis(payload: dict[str, Any], project: dict[str, Any]
 			raise ValueError("مفاهیم بررسی‌نشده باید در researcher_review گزارش شوند.")
 	_validate_references(reviews, concept_ids, known_paragraph_ids, category_id_set)
 	_validate_references(interview_analysis, concept_ids, known_paragraph_ids, category_id_set)
-	_validate_evidence(interview_analysis, paragraph_text)
+	_validate_evidence_shape(interview_analysis)
+	evidence_warnings = collect_evidence_warnings(
+		{"concept_reviews": reviews}, interview_analysis, project
+	)
+	quality_audit["evidence_warnings"] = evidence_warnings
+	if evidence_warnings:
+		quality_audit["all_evidence_verifiable"] = False
+		quality_audit["missing_data_detected"] = True
+		quality_audit["final_status"] = "incomplete"
+		payload["analysis_status"] = "incomplete"
+		quality_audit.setdefault("validation_issues", []).extend(
+			f"شاهد {item['record_type']} {item['record_id']} نیازمند بازبینی است: {item['status']}."
+			for item in evidence_warnings
+		)
+		for warning in evidence_warnings:
+			if warning["stage"] == "stage1":
+				for review in reviews:
+					if review.get("concept_id") == warning["record_id"]:
+						review["needs_researcher_review"] = True
+	else:
+		quality_audit["all_evidence_verifiable"] = quality_audit["all_evidence_verifiable"] and True
+	for warning in evidence_warnings:
+		_add_evidence_warning_review(interview_analysis, warning)
 	incomplete_flags = (
 		missing_concept_ids
 		or not quality_audit["all_concepts_reviewed"]
@@ -166,6 +191,7 @@ def _validate_subcategory_ids(categories: list[dict[str, Any]]) -> None:
 
 
 def _validate_legacy_analysis(payload: dict[str, Any], project: dict[str, Any]) -> None:
+	payload["quality_audit"].setdefault("evidence_warnings", [])
 	schema = json.loads(SCHEMA_PATH.read_text(encoding="utf-8"))
 	errors = sorted(Draft202012Validator(schema).iter_errors(payload), key=lambda error: list(error.path))
 	if errors:
@@ -222,13 +248,8 @@ def _validate_legacy_analysis(payload: dict[str, Any], project: dict[str, Any]) 
 			raise ValueError(f"برای مفهوم {review['concept_id']} شاهد متنی ارائه نشده است.")
 		for evidence in review.get("evidence", []):
 			paragraph_id = evidence.get("paragraph_id")
-			quote = evidence.get("exact_quote", "")
 			if paragraph_id not in paragraph_text:
-				raise ValueError(f"شاهد مفهوم {review['concept_id']} به پاراگراف ناموجود اشاره می‌کند.")
-			if paragraph_id not in concept_paragraph_ids:
-				raise ValueError(f"شاهد مفهوم {review['concept_id']} از پاراگراف مرتبط با آن نیست.")
-			if not quote or quote not in paragraph_text[paragraph_id]:
-				raise ValueError(f"نقل‌قول مفهوم {review['concept_id']} عیناً در متن پاراگراف پیدا نشد.")
+				review["needs_researcher_review"] = True
 
 	category_ids = {
 		item.get("category_id") for item in payload["categories"] if item.get("category_id")
@@ -262,7 +283,24 @@ def _validate_legacy_analysis(payload: dict[str, Any], project: dict[str, Any]) 
 		raise ValueError("تحلیل دارای داده ناقص، تناقض یا رابطه پشتیبانی‌نشده است و نمی‌تواند کامل باشد.")
 
 	_validate_references(payload, concept_ids, known_paragraph_ids, category_ids)
-	_validate_evidence(payload, paragraph_text)
+	_validate_evidence_shape(payload)
+	evidence_warnings = collect_evidence_warnings(
+		{"concept_reviews": payload["concept_reviews"]},
+		{k: v for k, v in payload.items() if k != "concept_reviews"},
+		project,
+	)
+	payload["quality_audit"]["evidence_warnings"] = evidence_warnings
+	if evidence_warnings:
+		payload["quality_audit"]["all_evidence_verifiable"] = False
+		payload["quality_audit"]["missing_data_detected"] = True
+		payload["quality_audit"]["final_status"] = "incomplete"
+		payload["analysis_status"] = "incomplete"
+		for warning in evidence_warnings:
+			if warning["stage"] == "stage1":
+				for review in payload["concept_reviews"]:
+					if review.get("concept_id") == warning["record_id"]:
+						review["needs_researcher_review"] = True
+			_add_evidence_warning_review(payload, warning)
 
 
 def _validate_references(
@@ -297,11 +335,50 @@ def _validate_references(
 			if key in category_keys
 			else None
 		)
-		if allowed is not None and value not in allowed:
+		if allowed is not None and value not in allowed and key != "paragraph_id":
 			raise ValueError(f"شناسه‌ی ارجاع‌شده وجود ندارد: {value}")
 
 
-def _validate_evidence(value: Any, paragraph_text: dict[str, str]) -> None:
+def _add_evidence_warning_review(
+	interview_analysis: dict[str, Any], warning: dict[str, Any]
+) -> None:
+	record_type = warning["record_type"]
+	item_type = record_type if record_type in {"concept", "category", "relationship"} else "paradigm"
+	item_id = warning["record_id"]
+	for category in interview_analysis.get("categories", []):
+		matches = record_type == "category" and category.get("category_id") == item_id
+		if record_type == "subcategory":
+			matches = any(
+				item.get("subcategory_id") == item_id for item in category.get("subcategories", [])
+			)
+		elif record_type == "property":
+			matches = any(item.get("property_id") == item_id for item in category.get("properties", []))
+			matches = matches or any(item.get("property_id") == item_id for item in category.get("dimensions", []))
+		if matches:
+			category["needs_researcher_review"] = True
+	for relationship in interview_analysis.get("relationships", []):
+		if record_type == "relationship" and relationship.get("relationship_id") == item_id:
+			relationship["needs_researcher_review"] = True
+	reviews = interview_analysis.setdefault("researcher_review", [])
+	if not any(
+		item.get("item_type") == item_type
+		and item.get("item_id") == item_id
+		and item.get("issue") == "شاهد نیازمند بازبینی"
+		for item in reviews
+	):
+		reviews.append({
+			"item_type": item_type,
+			"item_id": item_id,
+			"issue": "شاهد نیازمند بازبینی",
+			"reason": (
+				f"شاهد در {warning['paragraph_id']} وضعیت {warning['status']} دارد؛ "
+				f"امتیاز شباهت: {warning['similarity']}."
+			),
+			"suggested_action": "نقل‌قول را با متن پاراگراف اصلی بررسی کنید؛ Python آن را اصلاح نکرده است.",
+		})
+
+
+def _validate_evidence_shape(value: Any) -> None:
 	if isinstance(value, dict):
 		for key, child in value.items():
 			if key == "evidence":
@@ -317,11 +394,9 @@ def _validate_evidence(value: Any, paragraph_text: dict[str, str]) -> None:
 					interpretation = item.get("interpretation")
 					if not isinstance(interpretation, str) or not interpretation.strip():
 						raise ValueError("فیلد interpretation در تمام شواهد الزامی است.")
-					if not isinstance(paragraph_id, str) or paragraph_id not in paragraph_text:
-						raise ValueError("شاهد به شناسه پاراگراف ناموجود اشاره می‌کند.")
-					if not isinstance(quote, str) or not quote or quote not in paragraph_text[paragraph_id]:
-						raise ValueError("نقل‌قول شاهد عیناً در متن پاراگراف پیدا نشد.")
-			_validate_evidence(child, paragraph_text)
+					if not isinstance(paragraph_id, str) or not isinstance(quote, str) or not quote:
+						raise ValueError("شاهد باید شناسه پاراگراف و نقل‌قول غیرخالی داشته باشد.")
+			_validate_evidence_shape(child)
 	elif isinstance(value, list):
 		for child in value:
-			_validate_evidence(child, paragraph_text)
+			_validate_evidence_shape(child)

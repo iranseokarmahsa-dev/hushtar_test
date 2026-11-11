@@ -38,6 +38,38 @@
         "additionalProperties": false
       }
     },
+    "recordErrors": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["stage", "record_type", "record_id", "reason"],
+        "properties": {
+          "stage": {"enum": ["stage1", "stage2"]},
+          "record_type": {"type": "string"},
+          "record_id": {"type": "string"},
+          "reason": {"type": "string"},
+          "parent_category_id": {"type": "string"}
+        },
+        "additionalProperties": false
+      }
+    },
+    "evidenceWarnings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["stage", "record_type", "record_id", "paragraph_id", "exact_quote", "status", "similarity"],
+        "properties": {
+          "stage": {"enum": ["stage1", "stage2"]},
+          "record_type": {"type": "string"},
+          "record_id": {"type": "string"},
+          "paragraph_id": {"type": "string"},
+          "exact_quote": {"type": "string"},
+          "status": {"enum": ["fuzzy_match", "unmatched", "paragraph_not_found", "paragraph_not_assigned"]},
+          "similarity": {"type": ["integer", "null"], "minimum": 0, "maximum": 100}
+        },
+        "additionalProperties": false
+      }
+    },
     "conceptReviews": {
       "type": "array",
       "items": {
@@ -110,9 +142,9 @@
           "type": "object",
           "required": ["identified", "category_id", "title", "definition", "selection_reason", "supporting_category_ids", "supporting_concept_ids", "evidence", "alternative_interpretations", "confidence", "needs_researcher_review"],
           "properties": {
-            "identified": {"type": "boolean"},
-            "category_id": {"type": ["string", "null"]},
-            "title": {"type": ["string", "null"]},
+            "identified": {"const": true},
+            "category_id": {"type": "string", "minLength": 1},
+            "title": {"type": "string", "minLength": 1},
             "definition": {"type": "string"},
             "selection_reason": {"type": "string"},
             "supporting_category_ids": {"type": "array", "items": {"type": "string"}},
@@ -127,18 +159,7 @@
       ]
     },
     "phenomenonSummary": {
-      "oneOf": [
-        {"type": "null"},
-        {
-          "type": "object",
-          "required": ["category_id", "title"],
-          "properties": {
-            "category_id": {"type": ["string", "null"]},
-            "title": {"type": ["string", "null"]}
-          },
-          "additionalProperties": false
-        }
-      ]
+      "$ref": "#/$defs/phenomenon"
     },
     "relationship": {
       "type": "object",
@@ -175,6 +196,20 @@
       "required": ["categories", "central_phenomenon", "relationships", "paradigm_model", "researcher_review", "quality_audit"],
       "properties": {
         "categories": {"type": "array", "items": {"$ref": "#/$defs/category"}},
+        "unclassified_concepts": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["concept_id", "reason", "insufficient_evidence_reason", "evidence"],
+            "properties": {
+              "concept_id": {"type": "string"},
+              "reason": {"type": "string"},
+              "insufficient_evidence_reason": {"type": "string"},
+              "evidence": {"$ref": "#/$defs/evidence"}
+            },
+            "additionalProperties": false
+          }
+        },
         "central_phenomenon": {"$ref": "#/$defs/phenomenon"},
         "relationships": {"type": "array", "items": {"$ref": "#/$defs/relationship"}},
         "paradigm_model": {
@@ -216,7 +251,13 @@
             "contradictions_detected": {"type": "boolean"},
             "missing_data_detected": {"type": "boolean"},
             "analysis_limitations": {"type": "array", "items": {"type": "string"}},
-            "final_status": {"enum": ["complete", "incomplete"]}
+            "final_status": {"enum": ["complete", "incomplete"]},
+            "validation_issues": {"type": "array", "items": {"type": "string"}},
+            "evidence_warnings": {"$ref": "#/$defs/evidenceWarnings"},
+            "record_errors": {"$ref": "#/$defs/recordErrors"},
+            "code_model_mismatches": {"type": "array", "items": {"type": "object"}},
+            "missing_concept_review_ids": {"type": "array", "items": {"type": "string"}},
+            "missing_category_assignment_ids": {"type": "array", "items": {"type": "string"}}
           },
           "additionalProperties": false
         }

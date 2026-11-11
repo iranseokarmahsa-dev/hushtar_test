@@ -6,6 +6,7 @@ from fastapi.templating import Jinja2Templates
 
 from app.core.database import create_project, delete_project, get_project, list_projects, update_project
 from app.services.docx_parser import build_quality_report, parse_docx
+from app.services.prompt_builder import parse_project_markdown
 from app.services.synthesis_service import summarize_project_eligibility
 
 router = APIRouter(prefix="/projects", tags=["projects"])
@@ -56,7 +57,10 @@ def update_project_details(project_id: str, title: str = Form(...), topic: str =
 	_project_or_404(project_id)
 	if not title.strip():
 		raise HTTPException(status_code=422, detail="عنوان پژوهش الزامی است.")
-	update_project(project_id, title=title.strip(), topic=topic.strip())
+	update_project(
+		project_id, title=title.strip(), topic=topic.strip(),
+		analysis=None, raw_analysis=None, stage_outputs={}, researcher_edits={},
+	)
 	return RedirectResponse(f"/projects/{project_id}", status_code=303)
 
 
@@ -76,9 +80,44 @@ async def upload_interview(project_id: str, interview: UploadFile = File(...)):
 		project_id,
 		paragraphs=parsed["paragraphs"],
 		concepts=parsed["concepts"],
+		interview_id="",
 		processing_issues=parsed["processing_issues"],
 		analysis=None,
+		raw_analysis=None,
+		stage_outputs={},
+		researcher_edits={},
 		source_filename=interview.filename,
+	)
+	return RedirectResponse(f"/projects/{updated['project_id']}", status_code=303)
+
+
+@router.post("/{project_id}/markdown")
+async def upload_markdown_input(project_id: str, input_file: UploadFile = File(...)):
+	project = _project_or_404(project_id)
+	if not input_file.filename or not input_file.filename.lower().endswith((".md", ".markdown")):
+		raise HTTPException(status_code=400, detail="فقط فایل ورودی Markdown با پسوند MD پذیرفته می‌شود.")
+	content = await input_file.read(5 * 1024 * 1024 + 1)
+	if len(content) > 5 * 1024 * 1024:
+		raise HTTPException(status_code=413, detail="حجم فایل Markdown باید کمتر از ۵ مگابایت باشد.")
+	try:
+		input_data = parse_project_markdown(content.decode("utf-8-sig"))
+	except (UnicodeDecodeError, ValueError) as error:
+		raise HTTPException(status_code=400, detail=str(error)) from error
+	if input_data["project_id"] != project_id:
+		raise HTTPException(status_code=400, detail="شناسه پروژه در فایل Markdown با پروژه انتخاب‌شده مطابقت ندارد.")
+	updated = update_project(
+		project_id,
+		title=input_data["title"],
+		topic=input_data["topic"],
+		interview_id=input_data["interview_id"],
+		paragraphs=input_data["paragraphs"],
+		concepts=input_data["concepts"],
+		analysis=None,
+		raw_analysis=None,
+		stage_outputs={},
+		researcher_edits={},
+		processing_issues=[],
+		source_filename=input_file.filename,
 	)
 	return RedirectResponse(f"/projects/{updated['project_id']}", status_code=303)
 
@@ -121,7 +160,10 @@ def save_concepts(
 				"original_code": code.strip(),
 			}
 		)
-	update_project(project_id, concepts=saved, analysis=None)
+	update_project(
+		project_id, concepts=saved, analysis=None, raw_analysis=None, stage_outputs={},
+		researcher_edits={},
+	)
 	return RedirectResponse(f"/projects/{project_id}", status_code=303)
 
 

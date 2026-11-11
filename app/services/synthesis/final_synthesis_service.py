@@ -841,6 +841,11 @@ def _model_input(
     if relationships is None or relationships.get("stale") or relationships.get("approval_status") != "approved":
         raise ValueError("روابط تأییدشده و به‌روز لازم است.")
     inputs = load_final_synthesis_inputs(run_id)
+    pool_validation = (inputs.get("pool_result") or {}).get("validation_report_json") or {}
+    if not pool_validation.get("valid"):
+        raise ValueError(
+            "مدل نهایی قابل ساخت نیست: خطاهای بررسی دادهٔ مؤلفه‌های مصاحبه باید ابتدا اصلاح شوند."
+        )
     current_relations = build_relationship_prompt(run_id)
     if current_relations["input_hash"] != relationships["input_hash"]:
         raise ValueError("ورودی روابط پس از تأیید تغییر کرده است.")

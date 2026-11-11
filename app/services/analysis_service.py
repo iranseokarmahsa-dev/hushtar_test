@@ -6,7 +6,9 @@ by the researcher; this service does not independently code interview data.
 
 import json
 import html
+import hashlib
 import re
+from copy import deepcopy
 from typing import Any
 
 import yaml
@@ -167,16 +169,65 @@ def _filter_invalid_records(
 		if not errors:
 			valid.append(item)
 			continue
-		error = errors[0]
 		record_id = str(item.get(id_field, f"ردیف {index + 1}")) if isinstance(item, dict) else f"ردیف {index + 1}"
-		location = ".".join(str(part) for part in error.path)
-		issues.append({
+		raw_record = deepcopy(item)
+		repaired, auto_repair = _propose_record_repairs(item, record_type, validator)
+		if repaired is not None:
+			valid.append(repaired)
+			reason = "مقدارهای پیش‌فرض پیشنهادی نیازمند تأیید نهایی پژوهشگر هستند."
+		else:
+			error = errors[0]
+			location = ".".join(str(part) for part in error.path)
+			reason = f"رکورد از پردازش ساختاری کنار گذاشته شد ({location or 'root'}): {error.message}"
+		issue = {
 			"stage": stage,
 			"record_type": record_type,
 			"record_id": record_id,
-			"reason": f"رکورد از پردازش ساختاری کنار گذاشته شد ({location or 'root'}): {error.message}",
-		})
+			"reason": reason,
+			"raw_record": raw_record if isinstance(raw_record, dict) else {},
+		}
+		issue["resolution_id"] = hashlib.sha256(json.dumps(
+			{"stage": stage, "record_type": record_type, "record_id": record_id, "raw_record": raw_record},
+			ensure_ascii=False,
+			sort_keys=True,
+			default=str,
+		).encode("utf-8")).hexdigest()[:20]
+		if auto_repair:
+			issue["auto_repair"] = auto_repair
+			issue["repaired_record"] = repaired
+		issues.append(issue)
 	return valid, issues
+
+
+def _propose_record_repairs(
+	item: Any, record_type: str, validator: Draft202012Validator
+) -> tuple[dict[str, Any] | None, dict[str, Any]]:
+	if not isinstance(item, dict):
+		return None, {}
+	repaired = deepcopy(item)
+	proposed: dict[str, Any] = {}
+	for _ in range(4):
+		errors = sorted(validator.iter_errors(repaired), key=lambda error: list(error.path))
+		if not errors:
+			return (repaired, proposed) if proposed else (None, {})
+		error = errors[0]
+		if error.validator != "required":
+			return None, proposed
+		missing = [key for key in error.validator_value if key not in repaired]
+		if not missing:
+			return None, proposed
+		for field in missing:
+			if field == "confidence":
+				value: Any = 0.9
+			elif field == "needs_researcher_review":
+				value = True
+			elif field == "item_type" and record_type == "researcher_review":
+				value = "paradigm"
+			else:
+				return None, proposed
+			repaired[field] = value
+			proposed[field] = value
+	return None, proposed
 
 
 def _filter_invalid_evidence(
@@ -644,6 +695,7 @@ def _normalize_pasted_yaml(raw_markdown: str) -> str:
 	normalized = html.unescape(raw_markdown)
 	normalized = re.sub(r"\\\r?\n", "\n", normalized)
 	normalized = normalized.replace("\\-", "-")
+	normalized = normalized.replace("\\#", "#")
 	return normalized
 
 

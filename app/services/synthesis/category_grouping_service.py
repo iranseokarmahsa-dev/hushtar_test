@@ -90,9 +90,11 @@ def _approved_pool(run_id: str) -> tuple[dict[str, Any], int, int]:
     validation = pool_result.get("validation_report_json") or pool.get("validation_report") or {}
     metadata = pool.get("metadata") if isinstance(pool.get("metadata"), dict) else {}
     pools = pool.get("pools")
+    force_proceed = metadata.get("researcher_force_proceed", {}).get("confirmed") is True
     if pool_result.get("approval_status") != "approved" or pool_result.get("status") not in {"ready", "approved"}:
-        raise ValueError("Pool فاز سوم هنوز تأیید نهایی پژوهشگر را ندارد.")
-    if not isinstance(validation, dict) or not validation.get("valid"):
+        if not (force_proceed and pool_result.get("status") == "approved_with_warnings"):
+            raise ValueError("Pool فاز سوم هنوز تأیید نهایی پژوهشگر را ندارد.")
+    if (not isinstance(validation, dict) or not validation.get("valid")) and not force_proceed:
         raise ValueError("Pool فاز سوم دارای خطای اعتبارسنجی است و قابل استفاده نیست.")
     if pool.get("run_id") != run_id or metadata.get("source_count") != len(sources):
         raise ValueError("تعداد منابع Pool با منابع ثبت‌شده Run جاری مطابقت ندارد.")

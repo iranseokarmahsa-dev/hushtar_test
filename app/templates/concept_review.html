@@ -12,7 +12,7 @@
 </nav>
 {% if request.query_params.get('saved') %}<p class="alert alert-success" role="status">اصلاحات بازبینی مفاهیم ذخیره شد.</p>{% endif %}
 {% if project.analysis.analysis_status == 'incomplete' %}<p class="alert alert-warning" role="status">خروجی برای بازبینی ذخیره شد، اما کامل نیست. پرچم‌های کنترل کیفیت و محدودیت‌ها را در صفحهٔ تحلیل مصاحبه بررسی کنید.</p>{% endif %}
-<section class="review-summary" aria-label="خلاصه بازبینی">
+<section id="concepts" class="review-summary" aria-label="خلاصه بازبینی">
 	<strong>{{ reviews|length }} مفهوم</strong><span>پیشنهادها مستقل از تحلیل مصاحبه هستند.</span>
 </section>
 <form action="/results/{{ project.project_id }}/concept-review" method="post">
@@ -20,7 +20,7 @@
 		<thead><tr><th scope="col">شناسه و شاهد</th><th scope="col">مفهوم</th><th scope="col">کدگذاری</th><th scope="col">ارزیابی</th><th scope="col">تصمیم پژوهشگر</th></tr></thead>
 		<tbody>
 		{% for row in reviews %}
-		<tr class="review-concept-row">
+		<tr id="concept-{{ row.review.concept_id }}" class="review-concept-row">
 			<td><input type="hidden" name="concept_ids" value="{{ row.review.concept_id }}"><strong>{{ row.review.concept_id }}</strong>{% for paragraph in row.source_paragraphs %}<details class="review-evidence"><summary>{{ paragraph.paragraph_id }} · متن کامل پاراگراف</summary><blockquote>{{ paragraph.text }}</blockquote></details>{% endfor %}<details class="review-evidence"><summary>{{ row.review.paragraph_id }} · شاهد انتخاب‌شده</summary>{% for evidence in row.review.evidence %}<blockquote>{{ evidence.paragraph_id }} «{{ evidence.exact_quote }}»<small>{{ evidence.interpretation }}</small></blockquote>{% endfor %}</details></td>
 			<td><div class="review-field-pair"><div><small class="review-field-label">عنوان اولیه</small><p class="review-original-value">{{ row.review.original_concept }}</p></div><label><span class="review-field-label">پیشنهاد موجزتر/دقیق‌تر · قابل ویرایش</span><input name="suggested_concepts" value="{{ row.edit.get('suggested_concept', row.review.suggested_concept) }}" aria-label="عنوان مفهوم {{ row.review.concept_id }}" required></label></div></td>
 			<td><div class="review-field-pair"><div><small class="review-field-label">کد اولیه</small><p class="review-original-value">{{ row.review.original_code }}</p></div><label><span class="review-field-label">کد پیشنهادی</span><input name="suggested_codes" list="paradigm-code-options" value="{{ row.edit.get('suggested_code', row.review.suggested_code) }}" aria-label="کد پیشنهادی {{ row.review.concept_id }}" required></label></div></td>

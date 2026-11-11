@@ -166,6 +166,152 @@ def test_valid_two_sources_create_run(monkeypatch, tmp_path):
     assert len(payload["sources"]) == 2
 
 
+def test_direct_grouping_entry_redirects_to_pool_preview_when_pool_is_missing(monkeypatch, tmp_path):
+    _reset_db(monkeypatch, tmp_path)
+    first = create_project("مصاحبه اول", "موضوع مشترک")
+    second = create_project("مصاحبه دوم", "موضوع مشترک")
+    for project in (first, second):
+        project.update(_make_complete_project(project["project_id"], project["title"], "موضوع مشترک"))
+        from app.core.database import update_project
+        update_project(
+            project["project_id"],
+            paragraphs=project["paragraphs"],
+            concepts=project["concepts"],
+            analysis=project["analysis"],
+            researcher_edits=project["researcher_edits"],
+        )
+    client = TestClient(app, follow_redirects=False)
+    created = client.post(
+        "/synthesis/runs",
+        data={
+            "title": "تحلیل تلفیقی",
+            "study_topic": "موضوع مشترک",
+            "selected_ids": [first["project_id"], second["project_id"]],
+        },
+    )
+    run_id = created.json()["run_id"]
+
+    response = client.get(f"/synthesis/runs/{run_id}/category-grouping")
+
+    assert response.status_code == 303
+    assert response.headers["location"].split("?", 1)[0].endswith("/pool-preview")
+    preview = client.get(response.headers["location"])
+    assert preview.status_code == 200
+    assert "محتوای شش مؤلفه" in preview.text
+    assert "Pool" not in preview.text
+
+def test_force_proceed_is_audited_and_allows_only_intermediate_grouping(monkeypatch, tmp_path):
+    _reset_db(monkeypatch, tmp_path)
+    from app.repositories.synthesis_repository import list_stage_results
+    projects = [create_project(f"مصاحبه {index}", "موضوع مشترک") for index in (1, 2)]
+    from app.core.database import update_project
+    for project in projects:
+        project.update(_make_complete_project(project["project_id"], project["title"], "موضوع مشترک"))
+        project["analysis"]["interview_analysis"]["paradigm_model"]["causal_conditions"] = []
+        project["analysis"]["interview_analysis"]["categories"][0]["evidence"] = [{
+            "paragraph_id": "P001",
+            "exact_quote": "شاهد موجود نیست",
+            "interpretation": "شاهد نیازمند بازبینی پژوهشگر است.",
+        }]
+        update_project(
+            project["project_id"],
+            paragraphs=project["paragraphs"],
+            concepts=project["concepts"],
+            analysis=project["analysis"],
+            researcher_edits=project["researcher_edits"],
+        )
+
+    client = TestClient(app, follow_redirects=False)
+    created = client.post(
+        "/synthesis/runs",
+        data={
+            "title": "تحلیل آزمایشی",
+            "study_topic": "موضوع مشترک",
+            "selected_ids": [item["project_id"] for item in projects],
+        },
+    )
+    run_id = created.json()["run_id"]
+    preview = client.get(f"/synthesis/runs/{run_id}/pool-preview")
+    assert preview.status_code == 200
+    assert "category_coverage_mismatch" not in preview.text
+    assert "ادامه اجباری با مسئولیت پژوهشگر" in preview.text
+    assert "یکی از شاهدهای این مصاحبه" in preview.text
+
+    response = client.post(
+        f"/synthesis/runs/{run_id}/pool-review/force-proceed",
+        data={"reason": "ادامه برای مقایسه اکتشافی", "confirmed": "true"},
+        follow_redirects=False,
+    )
+    assert response.status_code == 303
+    latest = max(
+        (item for item in list_stage_results(run_id) if item["stage_key"] == "pool_extraction"),
+        key=lambda item: item["version"],
+    )
+    assert latest["status"] == "approved_with_warnings"
+    assert latest["approval_status"] == "approved"
+    assert latest["output_json"]["metadata"]["researcher_force_proceed"]["reason"] == "ادامه برای مقایسه اکتشافی"
+    assert latest["validation_report_json"]["valid"] is False
+
+    grouping = client.get(f"/synthesis/runs/{run_id}/category-grouping")
+    assert grouping.status_code == 200
+    assert "Prompt مستقل Markdown" in grouping.text
+
+
+def test_pool_item_can_be_confirmed_without_researcher_reason(monkeypatch, tmp_path):
+    _reset_db(monkeypatch, tmp_path)
+    first = create_project("مصاحبه اول", "موضوع مشترک")
+    second = create_project("مصاحبه دوم", "موضوع مشترک")
+    from app.core.database import update_project
+    for project in (first, second):
+        project.update(_make_complete_project(project["project_id"], project["title"], "موضوع مشترک"))
+        project["analysis"]["interview_analysis"]["paradigm_model"]["causal_conditions"] = []
+        update_project(
+            project["project_id"],
+            paragraphs=project["paragraphs"],
+            concepts=project["concepts"],
+            analysis=project["analysis"],
+            researcher_edits=project["researcher_edits"],
+        )
+    client = TestClient(app, follow_redirects=False)
+    created = client.post(
+        "/synthesis/runs",
+        data={
+            "title": "تحلیل آزمایشی",
+            "study_topic": "موضوع مشترک",
+            "selected_ids": [first["project_id"], second["project_id"]],
+        },
+    )
+    run_id = created.json()["run_id"]
+    client.get(f"/synthesis/runs/{run_id}/pool-preview")
+    from app.repositories.synthesis_repository import list_stage_results
+    latest = max(
+        (item for item in list_stage_results(run_id) if item["stage_key"] == "pool_extraction"),
+        key=lambda item: item["version"],
+    )
+    review_item = next(item for item in latest["output_json"]["review_items"] if item["decision_status"] != "approved")
+
+    response = client.post(
+        f"/synthesis/runs/{run_id}/pool-review/decision",
+        data={
+            "source_project_id": review_item["source_project_id"],
+            "category_id": review_item["category_id"],
+            "review_item_id": review_item["review_item_id"],
+            "pool_version": latest["version"],
+            "decision": "assign",
+            "component_key": "causal_conditions",
+        },
+    )
+
+    assert response.status_code == 303
+    updated = max(
+        (item for item in list_stage_results(run_id) if item["stage_key"] == "pool_extraction"),
+        key=lambda item: item["version"],
+    )
+    decision = updated["researcher_edits_json"]["decisions"][-1]
+    assert decision["reason"] == "تخصیص با تأیید پژوهشگر"
+    assert decision["approval_status"] == "approved"
+
+
 def test_incomplete_single_interview_is_eligible_when_source_coverage_is_verified(monkeypatch, tmp_path):
     _reset_db(monkeypatch, tmp_path)
     project = create_project("مصاحبه نامعتبر", "پژوهش مشترک")
@@ -190,11 +336,17 @@ def test_incomplete_single_interview_is_eligible_when_source_coverage_is_verifie
     assert response.status_code == 201
 
 
-def test_source_with_unverified_evidence_stays_ineligible(monkeypatch, tmp_path):
+def test_source_with_unverified_evidence_is_selectable_with_warning(monkeypatch, tmp_path):
     _reset_db(monkeypatch, tmp_path)
     project = create_project("مصاحبه با شاهد نامعتبر", "پژوهش مشترک")
     project.update(_make_complete_project(project["project_id"], "مصاحبه با شاهد نامعتبر", "پژوهش مشترک"))
     project["analysis"]["interview_analysis"]["quality_audit"]["all_evidence_verifiable"] = False
+    project["analysis"]["interview_analysis"]["quality_audit"]["evidence_warnings"] = [{
+        "record_type": "concept",
+        "record_id": "C001",
+        "paragraph_id": "P001",
+        "status": "fuzzy_match",
+    }]
     other = create_project("مصاحبه دوم", "پژوهش مشترک")
     other.update(_make_complete_project(other["project_id"], "مصاحبه دوم", "پژوهش مشترک"))
     from app.core.database import update_project
@@ -213,7 +365,8 @@ def test_source_with_unverified_evidence_stays_ineligible(monkeypatch, tmp_path)
         researcher_edits=other["researcher_edits"],
     )
 
-    response = TestClient(app).post(
+    client = TestClient(app)
+    response = client.post(
         "/synthesis/runs",
         data={
             "title": "تحلیل",
@@ -223,8 +376,39 @@ def test_source_with_unverified_evidence_stays_ineligible(monkeypatch, tmp_path)
         },
     )
 
-    assert response.status_code == 400
-    assert "all_evidence_verifiable" in response.json()["detail"]
+    assert response.status_code == 201
+    assert response.json()["selected_source_count"] == 2
+    assert len(response.json()["eligibility_warnings"]) == 1
+    assert "concept C001 در P001 (fuzzy_match)" in response.json()["eligibility_warnings"][0]["reason"]
+
+    selection_page = client.get("/synthesis/select")
+    assert f'href="/results/{project["project_id"]}/interview-analysis?show_quality=1#quality-audit"' in selection_page.text
+    review_page = client.get(f"/results/{project['project_id']}/interview-analysis?show_quality=1")
+    assert 'id="quality-audit"' in review_page.text
+    assert 'id="quality-evidence-0"' in review_page.text
+    assert 'id="stage-import-stage1"' in client.get(f"/analysis/{project['project_id']}").text
+
+
+def test_incomplete_interview_checkbox_is_not_disabled(monkeypatch, tmp_path):
+    _reset_db(monkeypatch, tmp_path)
+    project = create_project("مصاحبه نیازمند بازبینی", "موضوع")
+    source = _make_complete_project(project["project_id"], project["title"], "موضوع")
+    source["analysis"]["interview_analysis"]["quality_audit"]["all_evidence_verifiable"] = False
+    from app.core.database import update_project
+    update_project(
+        project["project_id"],
+        paragraphs=source["paragraphs"],
+        concepts=source["concepts"],
+        analysis=source["analysis"],
+        researcher_edits=source["researcher_edits"],
+    )
+
+    response = TestClient(app).get("/synthesis/select")
+
+    assert response.status_code == 200
+    row_input = next(line for line in response.text.splitlines() if project["project_id"] in line and 'name="selected_ids"' in line)
+    assert "disabled" not in row_input
+    assert "مجاز با هشدار" in response.text
 
 
 def test_selection_page_shows_deferred_incomplete_analysis_as_eligible(monkeypatch, tmp_path):
@@ -250,7 +434,9 @@ def test_selection_page_shows_deferred_incomplete_analysis_as_eligible(monkeypat
     assert response.status_code == 200
     assert 'name="selected_ids"' in response.text
     assert "مجاز با هشدار" in response.text
-    assert "ابهام نظری" in response.text
+    assert "پدیده محوری این مصاحبه جداگانه تعیین نشده" in response.text
+    assert "فاز ششم تحلیل تلفیقی" in response.text
+    assert f'href="/results/{project["project_id"]}/interview-analysis?show_quality=1#quality-audit"' in response.text
 
 
 def test_different_topics_require_explicit_confirmation(monkeypatch, tmp_path):
@@ -275,6 +461,72 @@ def test_different_topics_require_explicit_confirmation(monkeypatch, tmp_path):
     )
     assert response.status_code == 400
     assert "تفاوت موضوع" in response.json()["detail"]
+
+    confirmed_response = client.post(
+        "/synthesis/runs",
+        data={
+            "title": "تحلیل",
+            "study_topic": "پژوهش مشترک",
+            "selected_ids": f"{first['project_id']},{second['project_id']}",
+            "confirm_shared_topic": "on",
+        },
+    )
+    assert confirmed_response.status_code == 201
+    assert confirmed_response.json()["selected_source_count"] == 2
+
+
+def test_browser_selection_preserves_form_then_redirects_to_pool_preview(monkeypatch, tmp_path):
+    _reset_db(monkeypatch, tmp_path)
+    first = create_project("مصاحبه الف", "موضوع الف")
+    second = create_project("مصاحبه ب", "موضوع ب")
+    first.update(_make_complete_project(first["project_id"], "مصاحبه الف", "موضوع الف", concept_id="C001"))
+    second.update(_make_complete_project(second["project_id"], "مصاحبه ب", "موضوع ب", concept_id="C002"))
+    from app.core.database import update_project
+    for project in (first, second):
+        update_project(
+            project["project_id"],
+            paragraphs=project["paragraphs"],
+            concepts=project["concepts"],
+            analysis=project["analysis"],
+            researcher_edits=project["researcher_edits"],
+        )
+
+    client = TestClient(app)
+    form_data = {
+        "title": "تحلیل تلفیقی",
+        "study_topic": "پژوهش مشترک",
+        "selected_ids": [first["project_id"], second["project_id"]],
+    }
+    warning_response = client.post(
+        "/synthesis/runs",
+        data=form_data,
+        headers={"accept": "text/html"},
+    )
+    assert warning_response.status_code == 400
+    assert "موضوع مصاحبه‌های انتخاب‌شده متفاوت است" in warning_response.text
+    assert 'name="confirm_shared_topic"' in warning_response.text
+    assert 'value="تحلیل تلفیقی"' in warning_response.text
+    assert warning_response.text.count("checked") >= 2
+
+    confirmed_response = client.post(
+        "/synthesis/runs",
+        data={**form_data, "confirm_shared_topic": "on"},
+        headers={"accept": "text/html"},
+        follow_redirects=False,
+    )
+    assert confirmed_response.status_code == 303
+    location = confirmed_response.headers["location"]
+    assert location.endswith("/pool-preview")
+    preview = client.get(location)
+    assert preview.status_code == 200
+    assert "محتوای شش مؤلفه" in preview.text
+    assert "شرایط علّی" in preview.text
+    assert "اجرای مقوله‌سازی و تم‌سازی" in preview.text
+    run_id = location.rstrip("/").split("/")[-2]
+    assert f'href="/synthesis/runs/{run_id}/category-grouping"' in preview.text
+    grouping = client.get(f"/synthesis/runs/{run_id}/category-grouping")
+    assert grouping.status_code == 200
+    assert "Prompt مستقل Markdown" in grouping.text
 
 
 def test_snapshot_count_matches_selected_sources(monkeypatch, tmp_path):

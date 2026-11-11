@@ -147,6 +147,8 @@ def test_stage1_accepts_renderer_escaped_text_and_normalizes_revised_enum():
 	payload = _stage1(project)
 	payload["concept_reviews"][0]["code_evaluation"] = "revised"
 	raw_yaml = yaml.safe_dump(payload, allow_unicode=True, sort_keys=False)
+	raw_yaml = raw_yaml.replace("concept_reviews:\n", "concept_reviews:\n  # P001\n", 1)
+	raw_yaml = raw_yaml.replace("#", "\\#")
 	escaped = raw_yaml.replace(" ", "&#x20;").replace("-", "\\-")
 	escaped = escaped.replace("\n", "\\\n")
 	parsed = parse_stage_markdown(escaped, project, "stage1")
@@ -218,6 +220,47 @@ def test_invalid_stage2_category_does_not_discard_valid_categories():
 	assert result["interview_analysis"]["categories"][0]["category_id"] == "CAT01"
 	assert result["interview_analysis"]["quality_audit"]["record_errors"]
 	assert result["analysis_status"] == "incomplete"
+
+
+def test_missing_relationship_confidence_is_proposed_and_record_is_preserved():
+	project = _project()
+	stage2 = _stage2(project)
+	relationship = {
+		"relationship_id": "REL01",
+		"source_category_id": "CAT01",
+		"target_category_id": "CAT01",
+		"relationship_type": "interpretive",
+		"description": "رابطه آزمایشی",
+		"supporting_concept_ids": ["C001"],
+		"evidence": [{
+			"paragraph_id": "P001",
+			"exact_quote": "فشار کاری زیاد است",
+			"interpretation": "شاهد رابطه است.",
+		}],
+		"needs_researcher_review": True,
+	}
+	stage2["interview_analysis"]["relationships"] = [relationship]
+	stage2["interview_analysis"]["researcher_review"] = [{
+		"item_id": "C001",
+		"issue": "نیازمند بازبینی",
+		"reason": "مقدار نوع مورد مشخص نشده است.",
+		"suggested_action": "بازبینی پژوهشگر",
+	}]
+
+	parsed = parse_stage_markdown(_markdown(stage2), project, "stage2")
+	assert parsed["interview_analysis"]["relationships"][0]["confidence"] == 0.9
+	issue = parsed["_record_errors"][0]
+	assert issue["record_id"] == "REL01"
+	assert issue["raw_record"] == relationship
+	assert issue["auto_repair"] == {"confidence": 0.9}
+	assert parsed["interview_analysis"]["researcher_review"][0]["item_type"] == "paradigm"
+	assert parsed["_record_errors"][1]["auto_repair"] == {"item_type": "paradigm"}
+
+	combined = combine_stage_outputs(project, _stage1(project), parsed)
+	reimported = parse_analysis_markdown(yaml.safe_dump(combined, allow_unicode=True), project)
+	assert {item["resolution_id"] for item in reimported["interview_analysis"]["quality_audit"]["record_errors"]} == {
+		item["resolution_id"] for item in parsed["_record_errors"]
+	}
 
 
 def test_python_audit_checks_concept_id_set_not_only_record_count():

@@ -48,7 +48,11 @@
           "record_type": {"type": "string"},
           "record_id": {"type": "string"},
           "reason": {"type": "string"},
-          "parent_category_id": {"type": "string"}
+          "parent_category_id": {"type": "string"},
+          "raw_record": {"type": "object"},
+          "auto_repair": {"type": "object"},
+          "repaired_record": {"type": "object"},
+          "resolution_id": {"type": "string"}
         },
         "additionalProperties": false
       }

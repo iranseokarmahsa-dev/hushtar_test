@@ -35,8 +35,14 @@ def record_pool_review_decision(
 ) -> dict[str, Any]:
     if decision not in VALID_DECISIONS:
         raise ValueError("Unsupported Pool Review decision.")
-    if not isinstance(reason, str) or not reason.strip():
-        raise ValueError("A reason is required for every Pool Review decision.")
+    reason = reason.strip() if isinstance(reason, str) else ""
+    if not reason:
+        reason = {
+            "assign": "تخصیص با تأیید پژوهشگر",
+            "exclude": "استثنا با تأیید پژوهشگر",
+            "keep_multiple": "حفظ در چند مؤلفه با تأیید پژوهشگر",
+            "resolve_reference": "اصلاح ارجاع با تأیید پژوهشگر",
+        }[decision]
     if decision in {"assign", "resolve_reference"} and component_key not in COMPONENT_KEYS[:-1]:
         raise ValueError("A valid paradigm component is required for this decision.")
     if decision == "resolve_reference" and not replacement_category_id:
@@ -68,7 +74,7 @@ def record_pool_review_decision(
         "decision": decision,
         "component_key": component_key,
         "replacement_category_id": replacement_category_id,
-        "reason": reason.strip(),
+        "reason": reason,
         "recorded_at": recorded_at,
         "decided_at": recorded_at,
         "approval_status": "approved" if approved else "pending",
@@ -113,6 +119,63 @@ def record_pool_review_decision(
         validation_report_json=output["validation_report"],
         researcher_edits_json=edits,
         approval_status="pending" if metadata["needs_review_count"] or not output["validation_report"]["valid"] else "approved",
+    )
+    mark_stage_results_stale(
+        run_id,
+        ("category_grouping", "theme_synthesis", "phenomenon_synthesis", "relationship_synthesis", "final_model"),
+    )
+    return saved["output_json"]
+
+
+def record_pool_force_proceed(run_id: str, *, reason: str) -> dict[str, Any]:
+    if not isinstance(reason, str) or not reason.strip():
+        raise ValueError("برای ادامه با وجود هشدارها، دلیل پژوهشگر الزامی است.")
+    latest = _latest_result(run_id)
+    if latest is None:
+        raise ValueError("ابتدا مؤلفه‌های مصاحبه را آماده کنید.")
+    output = deepcopy(latest["output_json"])
+    coverage = output.get("source_coverage") or []
+    metadata = output.get("metadata") or {}
+    registered_count = metadata.get("registered_source_count")
+    if (
+        not coverage
+        or len(coverage) != registered_count
+        or any(not item.get("processed") for item in coverage)
+    ):
+        raise ValueError("منابع مصاحبه کامل پردازش نشده‌اند؛ ادامه اجباری برای پوشش ناقص منبع مجاز نیست.")
+
+    recorded_at = datetime.now(timezone.utc).isoformat()
+    force_decision = {
+        "confirmed": True,
+        "reason": reason.strip(),
+        "recorded_at": recorded_at,
+        "pool_version": latest["version"],
+        "validation_errors": len((latest.get("validation_report_json") or {}).get("errors", [])),
+        "pending_reviews": sum(
+            item.get("decision_status") != "approved"
+            for item in output.get("review_items", [])
+        ),
+    }
+    output.setdefault("metadata", {})["researcher_force_proceed"] = force_decision
+    output["version"] = latest["version"] + 1
+    output["input_hash"] = stable_hash({
+        "source_input_hash": metadata.get("source_input_hash"),
+        "force_proceed": force_decision,
+    })
+    edits = deepcopy(latest.get("researcher_edits_json") or {})
+    edits["researcher_force_proceed"] = force_decision
+    saved = save_stage_result(
+        run_id,
+        "pool_extraction",
+        "interview_pools",
+        version=output["version"],
+        status="approved_with_warnings",
+        input_hash=output["input_hash"],
+        output_json=output,
+        validation_report_json=output.get("validation_report", {}),
+        validation_report_text=latest.get("validation_report_text", ""),
+        researcher_edits_json=edits,
+        approval_status="approved",
     )
     mark_stage_results_stale(
         run_id,

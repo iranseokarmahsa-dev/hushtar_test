@@ -1,4 +1,5 @@
 import sqlite3
+from copy import deepcopy
 from urllib.parse import parse_qs, urlparse
 
 from fastapi.testclient import TestClient
@@ -283,6 +284,298 @@ def test_v2_quote_mismatch_is_reported_without_rejecting_the_analysis():
 	parsed = parse_analysis_markdown(as_markdown(output), project)
 	assert parsed["analysis_status"] == "incomplete"
 	assert parsed["interview_analysis"]["quality_audit"]["evidence_warnings"][0]["status"] == "unmatched"
+
+
+def test_researcher_can_confirm_fuzzy_evidence_inline(monkeypatch):
+	project, output = make_project_and_output()
+	warning = {
+		"stage": "stage1",
+		"record_type": "concept",
+		"record_id": "C001",
+		"paragraph_id": "P001",
+		"exact_quote": "فشار کاری زیاد است!",
+		"status": "fuzzy_match",
+		"similarity": 100,
+	}
+	output["concept_reviews"][0]["evidence"][0]["exact_quote"] = warning["exact_quote"]
+	output["analysis_status"] = "incomplete"
+	quality = output["interview_analysis"]["quality_audit"]
+	quality.update({
+		"all_evidence_verifiable": False,
+		"missing_data_detected": True,
+		"final_status": "incomplete",
+		"evidence_warnings": [warning],
+		"validation_issues": ["شاهد concept C001 نیازمند بازبینی است: fuzzy_match."],
+	})
+	project["analysis"] = output
+	monkeypatch.setattr(results_router, "get_project", lambda _: project)
+	monkeypatch.setattr(results_router, "update_project", lambda _project_id, **changes: project.update(changes) or project)
+	monkeypatch.setattr(results_router, "mark_synthesis_runs_stale_for_source", lambda _project_id: None)
+
+	response = TestClient(app, follow_redirects=False).post(
+		"/results/project-v2/evidence-resolution",
+		data={"warning_index": "0", "action": "approve_auto"},
+	)
+
+	assert response.status_code == 303
+	assert response.headers["location"].endswith("?show_quality=1#quality-audit")
+	assert project["analysis"]["concept_reviews"][0]["evidence"][0]["exact_quote"] == "مدیر گفت: فشار کاری زیاد است."
+	assert quality["evidence_warnings"] == []
+	assert quality["all_evidence_verifiable"] is True
+	assert quality["final_status"] == "complete"
+	assert project["researcher_edits"]["evidence_resolutions"][0]["confirmed"] is True
+
+
+def test_researcher_can_confirm_fuzzy_subcategory_evidence_inline(monkeypatch):
+	project, output = make_project_and_output()
+	category = output["interview_analysis"]["categories"][0]
+	category["subcategories"] = [{
+		"subcategory_id": "CAT01_S01",
+		"subcategory_name": "فشار زمانی",
+		"definition": "فشار مرتبط با زمان کار.",
+		"concept_ids": ["C001"],
+		"evidence": [{
+			"paragraph_id": "P001",
+			"exact_quote": "فشار کاری زیاد است!",
+			"interpretation": "شاهد زیرمقوله است.",
+		}],
+	}]
+	warning = {
+		"stage": "stage2",
+		"record_type": "subcategory",
+		"record_id": "CAT01_S01",
+		"paragraph_id": "P001",
+		"exact_quote": "فشار کاری زیاد است!",
+		"status": "fuzzy_match",
+		"similarity": 100,
+	}
+	quality = output["interview_analysis"]["quality_audit"]
+	quality.update({
+		"all_evidence_verifiable": False,
+		"missing_data_detected": True,
+		"final_status": "incomplete",
+		"evidence_warnings": [warning],
+		"validation_issues": ["شاهد subcategory CAT01_S01 نیازمند بازبینی است: fuzzy_match."],
+	})
+	output["analysis_status"] = "incomplete"
+	project["analysis"] = output
+	monkeypatch.setattr(results_router, "get_project", lambda _: project)
+	monkeypatch.setattr(results_router, "update_project", lambda _project_id, **changes: project.update(changes) or project)
+	monkeypatch.setattr(results_router, "mark_synthesis_runs_stale_for_source", lambda _project_id: None)
+
+	response = TestClient(app, follow_redirects=False).post(
+		"/results/project-v2/evidence-resolution",
+		data={"warning_index": "0", "action": "approve_auto"},
+	)
+
+	assert response.status_code == 303
+	assert category["subcategories"][0]["evidence"][0]["exact_quote"] == "مدیر گفت: فشار کاری زیاد است."
+	assert quality["evidence_warnings"] == []
+	assert quality["all_evidence_verifiable"] is True
+
+
+def test_researcher_can_confirm_a_structural_repair_inline(monkeypatch):
+	project, output = make_project_and_output()
+	resolution_id = "repair-rel01"
+	relationship = {
+		"relationship_id": "REL01",
+		"source_category_id": "CAT01",
+		"target_category_id": "CAT01",
+		"relationship_type": "interpretive",
+		"description": "رابطه آزمایشی",
+		"supporting_concept_ids": ["C001"],
+		"evidence": [],
+		"confidence": 0.9,
+		"needs_researcher_review": True,
+	}
+	output["interview_analysis"]["relationships"] = []
+	issue = {
+		"stage": "stage2",
+		"record_type": "relationship",
+		"record_id": "REL01",
+		"reason": "مقدار پیش‌فرض پیشنهادی نیازمند تأیید نهایی پژوهشگر است.",
+		"raw_record": {key: value for key, value in relationship.items() if key != "confidence"},
+		"auto_repair": {"confidence": 0.9},
+		"resolution_id": resolution_id,
+	}
+	quality = output["interview_analysis"]["quality_audit"]
+	quality.update({
+		"missing_data_detected": True,
+		"final_status": "incomplete",
+		"record_errors": [issue],
+		"validation_issues": ["رکورد relationship REL01 از مرحله stage2 پردازش نشد: confidence missing"],
+	})
+	output["analysis_status"] = "incomplete"
+	output["interview_analysis"]["researcher_review"] = [{
+		"item_type": "relationship",
+		"item_id": "REL01",
+		"issue": "رکورد نیازمند بازبینی ساختاری",
+		"reason": issue["reason"],
+		"suggested_action": "تأیید اصلاح",
+	}]
+	project["analysis"] = output
+	monkeypatch.setattr(results_router, "get_project", lambda _: project)
+	monkeypatch.setattr(results_router, "update_project", lambda _project_id, **changes: project.update(changes) or project)
+	monkeypatch.setattr(results_router, "mark_synthesis_runs_stale_for_source", lambda _project_id: None)
+	client = TestClient(app, follow_redirects=False)
+
+	page = client.get("/results/project-v2/interview-analysis?show_quality=1")
+	assert "موارد نیازمند تأیید" in page.text
+	assert "تأیید" in page.text
+	assert "REL01" in page.text
+	response = client.post(
+		"/results/project-v2/record-resolution",
+		data={"resolution_id": resolution_id},
+	)
+
+	assert response.status_code == 303
+	assert project["analysis"]["analysis_status"] == "complete"
+	assert project["analysis"]["interview_analysis"]["quality_audit"]["record_errors"] == []
+	assert project["analysis"]["interview_analysis"]["relationships"] == [relationship]
+	assert project["researcher_edits"]["structural_resolutions"][0]["confirmed"] is True
+
+
+def test_nonrepairable_structural_record_has_friendly_one_click_skip(monkeypatch):
+	project, output = make_project_and_output()
+	resolution_id = "skip-rel01"
+	quality = output["interview_analysis"]["quality_audit"]
+	quality.update({
+		"missing_data_detected": True,
+		"final_status": "incomplete",
+		"record_errors": [{
+			"stage": "stage2",
+			"record_type": "relationship",
+			"record_id": "REL01",
+			"reason": "رکورد از پردازش ساختاری کنار گذاشته شد (root): 'source_category_id' is a required property",
+			"raw_record": {"relationship_id": "REL01", "target_category_id": "CAT01"},
+			"resolution_id": resolution_id,
+		}],
+		"validation_issues": ["'source_category_id' is a required property"],
+	})
+	output["analysis_status"] = "incomplete"
+	project["analysis"] = output
+	monkeypatch.setattr(results_router, "get_project", lambda _: project)
+	monkeypatch.setattr(results_router, "update_project", lambda _project_id, **changes: project.update(changes) or project)
+	monkeypatch.setattr(results_router, "mark_synthesis_runs_stale_for_source", lambda _project_id: None)
+	client = TestClient(app, follow_redirects=False)
+
+	page = client.get("/results/project-v2/interview-analysis?show_quality=1")
+	assert "source_category_id" not in page.text
+	assert "is a required property" not in page.text
+	assert "تأیید و ادامه" in page.text
+	response = client.post(
+		"/results/project-v2/record-resolution",
+		data={"resolution_id": resolution_id},
+	)
+
+	assert response.status_code == 303
+	assert project["analysis"]["interview_analysis"]["quality_audit"]["record_errors"] == []
+	resolution = project["researcher_edits"]["structural_resolutions"][-1]
+	assert resolution["decision"] == "skipped"
+	assert resolution["confirmed"] is True
+	assert project["analysis"]["analysis_status"] == "incomplete"
+
+
+def test_legacy_structural_error_recovers_record_from_saved_stage_markdown(monkeypatch):
+	project, output = make_project_and_output()
+	stage2 = {
+		"schema_version": "HOOSHYAR_STAGE2_1.0",
+		"project_id": project["project_id"],
+		"interview_id": project["project_id"],
+		"interview_analysis": deepcopy(output["interview_analysis"]),
+	}
+	del stage2["interview_analysis"]["quality_audit"]
+	stage2["interview_analysis"]["relationships"] = [{
+		"relationship_id": "REL01",
+		"source_category_id": "CAT01",
+		"target_category_id": "CAT01",
+		"relationship_type": "interpretive",
+		"description": "رابطه آزمایشی",
+		"supporting_concept_ids": ["C001"],
+		"evidence": [],
+		"needs_researcher_review": True,
+	}]
+	quality = output["interview_analysis"]["quality_audit"]
+	quality.update({
+		"record_errors": [{
+			"stage": "stage2",
+			"record_type": "relationship",
+			"record_id": "REL01",
+			"reason": "رکورد از نسخه قبلی کنار گذاشته شد.",
+		}],
+		"validation_issues": ["رکورد relationship REL01 از مرحله stage2 پردازش نشد: confidence missing"],
+		"missing_data_detected": True,
+		"final_status": "incomplete",
+	})
+	raw_stage2 = yaml.safe_dump(stage2, allow_unicode=True)
+	output["analysis_status"] = "incomplete"
+	output["interview_analysis"]["relationships"] = []
+	project["analysis"] = output
+	project["stage_outputs"] = {"stage2": {"raw_markdown": raw_stage2}}
+	monkeypatch.setattr(results_router, "get_project", lambda _: project)
+	monkeypatch.setattr(results_router, "update_project", lambda _project_id, **changes: project.update(changes) or project)
+	monkeypatch.setattr(results_router, "mark_synthesis_runs_stale_for_source", lambda _project_id: None)
+	client = TestClient(app, follow_redirects=False)
+
+	page = client.get("/results/project-v2/interview-analysis?show_quality=1")
+	assert "موارد نیازمند تأیید" in page.text
+	assert "ویرایش" in page.text
+	recovered = results_router._recover_structural_record_errors(project)[0]
+	response = client.post(
+		"/results/project-v2/record-resolution",
+		data={"resolution_id": recovered["resolution_id"]},
+	)
+
+	assert response.status_code == 303
+	assert project["analysis"]["interview_analysis"]["relationships"][0]["confidence"] == 0.9
+	assert project["analysis"]["interview_analysis"]["quality_audit"]["record_errors"] == []
+	assert project["analysis"]["analysis_status"] == "complete"
+
+
+def test_interview_review_keeps_researcher_save_form_separate_from_inline_forms(monkeypatch):
+	project, output = make_project_and_output()
+	output["interview_analysis"]["quality_audit"].update({
+		"all_evidence_verifiable": False,
+		"missing_data_detected": True,
+		"final_status": "incomplete",
+		"evidence_warnings": [{
+			"stage": "stage1",
+			"record_type": "concept",
+			"record_id": "C001",
+			"paragraph_id": "P001",
+			"exact_quote": "فشار کاری زیاد است!",
+			"status": "fuzzy_match",
+			"similarity": 100,
+		}],
+	})
+	output["analysis_status"] = "incomplete"
+	project["analysis"] = output
+	monkeypatch.setattr(results_router, "get_project", lambda _: project)
+	monkeypatch.setattr(results_router, "update_project", lambda _project_id, **changes: project.update(changes) or project)
+	monkeypatch.setattr(results_router, "mark_synthesis_runs_stale_for_source", lambda _project_id: None)
+	page = TestClient(app).get("/results/project-v2/interview-analysis?show_quality=1").text
+
+	main_form_start = page.index('<form id="interview-analysis-form"')
+	main_form_end = page.index("</form>", main_form_start)
+	evidence_form_start = page.index('<form id="evidence-auto-0"')
+	save_button = page.index("ذخیره اصلاحات پژوهشگر", main_form_start)
+
+	assert main_form_start < save_button < main_form_end < evidence_form_start
+	assert 'form="evidence-auto-0"' in page
+	response = TestClient(app, follow_redirects=False).post(
+		"/results/project-v2/interview-analysis",
+		data={
+			"category_ids": "CAT01",
+			"category_names": "فشارهای کاری",
+			"category_definitions": "تجربه فشار در محیط کار.",
+			"central_phenomenon_title": "",
+			"central_phenomenon_definition": "",
+			"researcher_note": "بازبینی انجام شد",
+			"confirmed": "true",
+		},
+	)
+	assert response.status_code == 303
+	assert project["researcher_edits"]["interview_analysis"]["confirmed"] is True
 
 
 def test_v2_rejects_unknown_relationship_categories():

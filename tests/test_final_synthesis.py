@@ -27,6 +27,7 @@ from app.services.synthesis.final_synthesis_service import (
     submit_phenomenon_output,
     submit_relationship_output,
 )
+from app.services.synthesis import final_synthesis_service
 from app.services.synthesis.final_diagram_service import prepare_final_model_diagram
 from app.services.synthesis.phenomenon_prompt_builder import (
     FinalSynthesisPromptSizeLimitError,
@@ -44,6 +45,19 @@ def _reset_db(monkeypatch, tmp_path):
     database_module.DATA_DIR = data_dir
     database_module.DATABASE_PATH = data_dir / "hooshyar.sqlite3"
     init_db()
+
+
+def test_force_proceeded_pool_still_blocks_final_model_when_validation_fails(monkeypatch):
+    monkeypatch.setattr(final_synthesis_service, "latest_phenomenon_result", lambda _run_id: {"approval_status": "approved"})
+    monkeypatch.setattr(final_synthesis_service, "latest_relationship_result", lambda _run_id: {"approval_status": "approved"})
+    monkeypatch.setattr(
+        final_synthesis_service,
+        "load_final_synthesis_inputs",
+        lambda _run_id: {"pool_result": {"validation_report_json": {"valid": False}}},
+    )
+
+    with pytest.raises(ValueError, match="مدل نهایی قابل ساخت نیست"):
+        final_synthesis_service._model_input("run-force-proceed")
 
 
 def _make_project(index: int):

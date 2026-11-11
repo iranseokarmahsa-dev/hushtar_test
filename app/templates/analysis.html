@@ -49,11 +49,11 @@
 {% endif %}
 
 {% if prompts %}
-<section class="panel workflow-panel prompt-panel">
+<section id="prompt-panel" class="panel workflow-panel prompt-panel">
 	<div class="section-heading"><div><p class="eyebrow">تبادل با هوش مصنوعی</p><h2>دو پرامپت مستقل</h2></div><span class="step-number">۰۲</span></div>
 	<p class="muted">خروجی هر مرحله را به‌صورت Markdown جداگانه ذخیره و ارسال کنید. تحلیل مرحله دوم مستقل است و خروجی مرحله اول به آن داده نمی‌شود.</p>
 	{% for stage, label in [('stage1', 'مرحله اول ـ بازبینی مفاهیم'), ('stage2', 'مرحله دوم ـ تحلیل مستقل مصاحبه')] %}
-	<section class="workflow-panel">
+	<section id="stage-import-{{ stage }}" class="workflow-panel">
 		<div class="section-heading"><div><h3>{{ label }}</h3><p class="muted">{% if project.get('stage_outputs', {}).get(stage) %}خروجی این مرحله ذخیره شده است.{% else %}خروجی این مرحله هنوز ثبت نشده است.{% endif %}</p></div></div>
 		<div class="prompt-actions"><a class="button button-secondary" href="/analysis/{{ project.project_id }}/prompt/{{ stage }}.md">دانلود پرامپت Markdown</a><button class="button button-secondary" type="button" data-copy="#prompt-{{ stage }}">کپی پرامپت</button></div>
 		<textarea id="prompt-{{ stage }}" class="prompt-text" readonly rows="12">{{ prompts[stage] }}</textarea>

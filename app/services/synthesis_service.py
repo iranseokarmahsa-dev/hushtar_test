@@ -8,25 +8,64 @@ from app.core.database import get_project
 from app.repositories.synthesis_repository import create_synthesis_run, save_run_sources
 
 
-def summarize_project_eligibility(project: dict[str, Any]) -> dict[str, Any]:
+def _eligibility_failure(
+    project: dict[str, Any], reason: str, review_path: str, review_label: str
+) -> dict[str, Any]:
+    return {
+        "eligible": False,
+        "status": "نامعتبر",
+        "reason": reason,
+        "review_url": review_path.format(project_id=project["project_id"]),
+        "review_label": review_label,
+    }
+
+
+def summarize_project_eligibility(
+    project: dict[str, Any], *, allow_incomplete: bool = False
+) -> dict[str, Any]:
+    result = _summarize_project_eligibility(project)
+    if not allow_incomplete or project is None or result.get("eligible"):
+        return result
+    return {
+        **result,
+        "eligible": True,
+        "status": "مجاز با هشدار",
+        "reason": "این مصاحبه تحلیل یا بازبینی کاملی ندارد، اما می‌توانید آن را وارد اجرای تلفیقی کنید. "
+        + result.get("reason", ""),
+    }
+
+
+def _summarize_project_eligibility(project: dict[str, Any]) -> dict[str, Any]:
     """Return structured eligibility and a Persian reason for each project."""
     if project is None:
         return {"eligible": False, "status": "ناموجود", "reason": "رکورد مصاحبه پیدا نشد."}
 
     if not project.get("paragraphs"):
-        return {"eligible": False, "status": "نامعتبر", "reason": "paragraphs خالی است."}
+        return _eligibility_failure(
+            project, "متن مصاحبه ثبت نشده است.", "/analysis/{project_id}", "افزودن متن مصاحبه"
+        )
     if not project.get("concepts"):
-        return {"eligible": False, "status": "نامعتبر", "reason": "concepts خالی است."}
+        return _eligibility_failure(
+            project, "مفهومی برای بررسی ثبت نشده است.", "/analysis/{project_id}", "بررسی ورودی مصاحبه"
+        )
 
     analysis = project.get("analysis")
     if not analysis:
-        return {"eligible": False, "status": "نامعتبر", "reason": "تحلیل ثبت نشده است."}
+        return _eligibility_failure(
+            project, "تحلیل مصاحبه ثبت نشده است.", "/analysis/{project_id}#prompt-panel", "رفتن به دریافت و ورود تحلیل"
+        )
     if analysis.get("schema_version") != "2.0":
-        return {"eligible": False, "status": "نامعتبر", "reason": "schema_version برابر 2.0 نیست."}
+        return _eligibility_failure(
+            project, "خروجی تحلیل با قرارداد مرحله‌ای فعلی سازگار نیست.",
+            "/analysis/{project_id}#prompt-panel", "بازبینی و ورود خروجی تحلیل"
+        )
 
     interview_analysis = analysis.get("interview_analysis")
     if not isinstance(interview_analysis, dict):
-        return {"eligible": False, "status": "نامعتبر", "reason": "interview_analysis وجود ندارد."}
+        return _eligibility_failure(
+            project, "تحلیل مستقل مصاحبه وجود ندارد.",
+            "/analysis/{project_id}#stage-import-stage2", "ورود خروجی مرحله دوم"
+        )
 
     quality = interview_analysis.get("quality_audit") or {}
     for flag_name in (
@@ -35,54 +74,107 @@ def summarize_project_eligibility(project: dict[str, Any]) -> dict[str, Any]:
         "all_evidence_verifiable",
     ):
         if not quality.get(flag_name):
-            return {"eligible": False, "status": "نامعتبر", "reason": f"{flag_name} برابر true نیست."}
+            review_path = f"/results/{project['project_id']}/interview-analysis?show_quality=1#quality-audit"
+            review_label = "رفتن به کنترل کیفیت"
+            if flag_name == "all_concepts_reviewed":
+                reason = "بازبینی همه مفاهیم کامل نشده است."
+                review_path = f"/results/{project['project_id']}/concept-review#concepts"
+                review_label = "رفتن به مفاهیم نیازمند بازبینی"
+            elif flag_name == "all_ids_preserved":
+                reason = "شناسه‌ها یا ارجاع‌های تحلیل با ورودی مصاحبه تطبیق ندارند."
+                review_path = f"/results/{project['project_id']}/interview-analysis?show_quality=1#quality-validation"
+                review_label = "دیدن خطاهای ارجاع و ساختار"
+            else:
+                reason = "شواهد باید با متن اصلی مصاحبه تطبیق داده شوند."
+            if flag_name == "all_evidence_verifiable":
+                warnings = quality.get("evidence_warnings") or []
+                warning_refs = [
+                    f"{item.get('record_type')} {item.get('record_id')} در {item.get('paragraph_id')} ({item.get('status')})"
+                    for item in warnings[:3]
+                    if isinstance(item, dict)
+                ]
+                if warning_refs:
+                    remaining = len(warnings) - len(warning_refs)
+                    reason = "شواهد نیازمند بازبینی: " + "؛ ".join(warning_refs)
+                    if remaining > 0:
+                        reason += f"؛ و {remaining} مورد دیگر"
+                    reason += "."
+            return {
+                "eligible": False,
+                "status": "نامعتبر",
+                "reason": reason,
+                "review_url": review_path,
+                "review_label": review_label,
+            }
     for flag_name in (
         "unsupported_relationships_detected",
         "contradictions_detected",
     ):
         if quality.get(flag_name):
-            return {"eligible": False, "status": "نامعتبر", "reason": f"{flag_name} برابر false نیست."}
+            reason = (
+                "رابطه‌ای بدون پشتوانهٔ کافی ثبت شده است."
+                if flag_name == "unsupported_relationships_detected"
+                else "در طبقه‌بندی یا جای‌دهی مؤلفه‌ها تناقض پیدا شده است."
+            )
+            return _eligibility_failure(
+                project, reason,
+                f"/results/{project['project_id']}/interview-analysis?show_quality=1#quality-validation",
+                "رفتن به خطاهای ممیزی",
+            )
 
     concept_ids = [str(item.get("concept_id") or "") for item in project.get("concepts", [])]
     if not all(concept_ids) or len(concept_ids) != len(set(concept_ids)):
-        return {"eligible": False, "status": "نامعتبر", "reason": "شناسه مفاهیم ورودی خالی یا تکراری است."}
+        return _eligibility_failure(
+            project, "شناسهٔ مفاهیم ورودی خالی یا تکراری است.",
+            f"/analysis/{project['project_id']}#stage-import-stage1", "بازبینی خروجی مرحله اول"
+        )
     review_ids = [
         str(item.get("concept_id") or "")
         for item in analysis.get("concept_reviews", [])
         if isinstance(item, dict)
     ]
     if len(review_ids) != len(concept_ids) or set(review_ids) != set(concept_ids):
-        return {
-            "eligible": False,
-            "status": "نامعتبر",
-            "reason": "بازبینی تحلیل برای همه مفاهیم ورودی ثبت نشده است؛ خروجی مرحله اول را اصلاح و دوباره وارد کنید.",
-        }
+        return _eligibility_failure(
+            project, "بازبینی همه مفاهیم ورودی ثبت نشده؛ خروجی مرحله اول را اصلاح و دوباره وارد کنید.",
+            f"/analysis/{project['project_id']}#stage-import-stage1", "رفتن به ورود مرحله اول"
+        )
     source_scope = analysis.get("source_scope") or {}
     if (
         source_scope.get("total_paragraphs") != len(project.get("paragraphs", []))
         or source_scope.get("total_concepts_received") != len(concept_ids)
         or source_scope.get("total_concepts_reviewed") != len(concept_ids)
     ):
-        return {
-            "eligible": False,
-            "status": "نامعتبر",
-            "reason": "شمارنده پوشش پاراگراف‌ها یا مفاهیم با ورودی مصاحبه مطابقت ندارد.",
-        }
+        return _eligibility_failure(
+            project, "شمار مفاهیم یا پاراگراف‌ها با ورودی مصاحبه مطابقت ندارد.",
+            f"/analysis/{project['project_id']}#stage-import-stage1", "بازبینی ورودی و مرحله اول"
+        )
 
     researcher_edits = project.get("researcher_edits") or {}
     interview_edit = researcher_edits.get("interview_analysis") or {}
     if not interview_edit.get("confirmed"):
-        return {"eligible": False, "status": "نامعتبر", "reason": "researcher_edits.interview_analysis.confirmed برابر true نیست."}
+        return _eligibility_failure(
+            project, "تحلیل مصاحبه هنوز تأیید پژوهشگر نشده است.",
+            f"/results/{project['project_id']}/interview-analysis#researcher-confirmation",
+            "رفتن به تأیید تحلیل",
+        )
 
     concept_reviews = researcher_edits.get("concept_reviews") or {}
     for concept_id in concept_ids:
         if not concept_reviews.get(concept_id, {}).get("confirmed"):
-            return {"eligible": False, "status": "نامعتبر", "reason": f"concept_id {concept_id} تأیید پژوهشگر ندارد."}
+            return _eligibility_failure(
+                project, f"مفهوم {concept_id} تأیید پژوهشگر ندارد.",
+                f"/results/{project['project_id']}/concept-review#concept-{concept_id}",
+                f"رفتن به بازبینی مفهوم {concept_id}",
+            )
 
     categories = {item["category_id"] for item in interview_analysis.get("categories", []) if item.get("category_id")}
     for item in (interview_analysis.get("central_phenomenon") or {}).get("supporting_category_ids", []):
         if item not in categories:
-            return {"eligible": False, "status": "نامعتبر", "reason": "ارجاع پدیده محوری به مقوله ناموجود اشاره می‌کند."}
+            return _eligibility_failure(
+                project, "ارجاع پدیده محوری به مقوله‌ای ناموجود اشاره می‌کند.",
+                f"/results/{project['project_id']}/interview-analysis?show_quality=1#quality-validation",
+                "رفتن به خطاهای ارجاع",
+            )
 
     paradigm_model = interview_analysis.get("paradigm_model") or {}
     for component_key, value in paradigm_model.items():
@@ -93,7 +185,11 @@ def summarize_project_eligibility(project: dict[str, Any]) -> dict[str, Any]:
                 continue
             category_id = item.get("category_id")
             if category_id and category_id not in categories:
-                return {"eligible": False, "status": "نامعتبر", "reason": f"ارجاع پارادایمی به مقوله {category_id} ناموجود است."}
+                return _eligibility_failure(
+                    project, f"ارجاع پارادایمی به مقوله {category_id} ناموجود است.",
+                    f"/results/{project['project_id']}/interview-analysis?show_quality=1#quality-validation",
+                    "رفتن به خطاهای ارجاع",
+                )
 
     deferred_single_interview_questions = (
         analysis.get("analysis_status") != "complete"
@@ -101,13 +197,22 @@ def summarize_project_eligibility(project: dict[str, Any]) -> dict[str, Any]:
         or quality.get("missing_data_detected") is True
     )
     if deferred_single_interview_questions:
+        if not interview_analysis.get("central_phenomenon"):
+            reason = (
+                "پدیده محوری این مصاحبه جداگانه تعیین نشده و در فاز ششم تحلیل تلفیقی بررسی می‌شود؛ "
+                "پوشش مفاهیم، شناسه‌ها و شواهد تأیید شده است."
+            )
+        else:
+            reason = (
+                "پوشش مفاهیم، شناسه‌ها و شواهد تأیید شده است. تحلیل تک‌مصاحبه‌ای ناتمام است؛ "
+                "ابهام‌های باقی‌مانده در مراحل تلفیقی بررسی می‌شوند."
+            )
         return {
             "eligible": True,
             "status": "مجاز با هشدار",
-            "reason": (
-                "پوشش مفاهیم، شناسه‌ها و شواهد تأیید شده است. ابهام نظریِ تحلیل یک مصاحبه "
-                "مانع تلفیق نیست و در مقایسهٔ بین‌مصاحبه‌ای بررسی می‌شود."
-            ),
+            "reason": reason,
+            "review_url": f"/results/{project['project_id']}/interview-analysis?show_quality=1#quality-audit",
+            "review_label": "مشاهدهٔ جزئیات تحلیل ناتمام",
         }
     return {"eligible": True, "status": "مجاز", "reason": "مصاحبه برای تحلیل تلفیقی آماده است."}
 
@@ -139,10 +244,9 @@ def parse_selected_ids(selected_ids: Any, *, deduplicate: bool = True) -> list[s
     return cleaned
 
 
-def _shared_topic_or_error(selected_projects: list[dict[str, Any]]) -> None:
+def _shared_topic_or_error(selected_projects: list[dict[str, Any]]) -> bool:
     topics = {str(project.get("topic") or "").strip() for project in selected_projects}
-    if len(topics) > 1:
-        raise ValueError("تفاوت موضوع‌های مصاحبه‌های انتخاب‌شده وجود دارد. برای ادامه باید تأیید صریح کاربر را بدهید.")
+    return len(topics) > 1
 
 
 def create_synthesis_run_from_selection(
@@ -168,14 +272,22 @@ def create_synthesis_run_from_selection(
             raise ValueError(f"مصاحبه با شناسه {project_id} پیدا نشد.")
         selected_projects.append(project)
 
-    for project in selected_projects:
-        eligibility = summarize_project_eligibility(project)
-        if not eligibility["eligible"]:
-            raise ValueError(f"مصاحبه '{project.get('title','نامشخص')}' نامعتبر است: {eligibility['reason']}")
+    eligibility_warnings = [
+        {
+            "project_id": project["project_id"],
+            "title": project.get("title", "مصاحبه نامشخص"),
+            "reason": summarize_project_eligibility(project, allow_incomplete=True)["reason"],
+        }
+        for project in selected_projects
+        if summarize_project_eligibility(project, allow_incomplete=True)["status"] == "مجاز با هشدار"
+    ]
 
-    _shared_topic_or_error(selected_projects)
-    if not confirm_shared_topic:
-        raise ValueError("تفاوت موضوع‌های مصاحبه‌های انتخاب‌شده وجود دارد. برای ادامه باید تأیید صریح کاربر را بدهید.")
+    topics_differ = _shared_topic_or_error(selected_projects)
+    if topics_differ and not confirm_shared_topic:
+        raise ValueError(
+            "موضوع مصاحبه‌های انتخاب‌شده متفاوت است. اگر با وجود این تفاوت قصد ادامه دارید، "
+            "تأیید آگاهانهٔ تفاوت موضوع را علامت بزنید."
+        )
 
     run = create_synthesis_run(
         title=title.strip(),
@@ -192,5 +304,6 @@ def create_synthesis_run_from_selection(
         "schema_version": run["schema_version"],
         "selected_source_count": len(sources),
         "expected_source_count": len(normalized_ids),
+        "eligibility_warnings": eligibility_warnings,
         "sources": sources,
     }

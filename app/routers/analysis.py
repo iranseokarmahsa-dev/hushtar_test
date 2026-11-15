@@ -156,4 +156,5 @@ async def import_stage(
 		mark_synthesis_runs_stale_for_source(project_id)
 		return RedirectResponse(f"/results/{updated['project_id']}/concept-review", status_code=303)
 	update_project(project_id, **changes)
-	return RedirectResponse(f"/analysis/{project_id}", status_code=303)
+	next_step = "#stage-import-stage2" if stage == "stage1" else ""
+	return RedirectResponse(f"/analysis/{project_id}{next_step}", status_code=303)

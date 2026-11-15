@@ -2,35 +2,103 @@
 {% block title %}بازبینی مفاهیم | {{ project.title }}{% endblock %}
 {% block content %}
 <div class="breadcrumbs"><a href="/projects">تاریخچه</a><span>/</span><span>{{ project.title }}</span></div>
-<section class="page-heading">
-	<div><p class="eyebrow">بخش اول تحلیل AI</p><h1>بازبینی مفاهیم پژوهشگر</h1><p class="lede">پیشنهادها را بررسی کنید؛ عنوان و کد اولیه در پاسخ خام حفظ شده‌اند.</p></div>
-	<a class="button button-secondary" href="/projects/{{ project.project_id }}">بازگشت به پروژه</a>
+<section class="concept-review-heading">
+	<div>
+		<p class="eyebrow">مرحله اول تحلیل</p>
+		<h1>بازبینی مفاهیم</h1>
+		<p class="lede">بررسی و تأیید مفاهیم و کدگذاری‌های پیشنهادی هوش مصنوعی</p>
+		<p class="concept-review-interview">مصاحبه: <strong>{{ project.interview_id or project.title }}</strong></p>
+	</div>
+	<div class="concept-review-heading-actions">
+		<span class="concept-stage-badge">مرحله اول: بازبینی مفاهیم</span>
+		<a class="button button-secondary" href="/projects/{{ project.project_id }}">بازگشت به پروژه</a>
+	</div>
 </section>
 <nav class="result-tabs" aria-label="بخش‌های تحلیل">
 	<a class="is-active" href="/results/{{ project.project_id }}/concept-review">بازبینی مفاهیم</a>
 	<a href="/results/{{ project.project_id }}/interview-analysis">تحلیل مصاحبه</a>
 </nav>
-{% if request.query_params.get('saved') %}<p class="alert alert-success" role="status">اصلاحات بازبینی مفاهیم ذخیره شد.</p>{% endif %}
+{% if request.query_params.get('saved') %}<p class="alert alert-success" role="status">تصمیم و اصلاحات بازبینی مفاهیم ذخیره شد.</p>{% endif %}
 {% if project.analysis.analysis_status == 'incomplete' %}<p class="alert alert-warning" role="status">خروجی برای بازبینی ذخیره شد، اما کامل نیست. پرچم‌های کنترل کیفیت و محدودیت‌ها را در صفحهٔ تحلیل مصاحبه بررسی کنید.</p>{% endif %}
-<section id="concepts" class="review-summary" aria-label="خلاصه بازبینی">
-	<strong>{{ reviews|length }} مفهوم</strong><span>پیشنهادها مستقل از تحلیل مصاحبه هستند.</span>
+
+<section class="concept-review-stats" aria-label="آمار بازبینی">
+	<article class="concept-stat"><span>کل مفاهیم</span><strong>{{ total_count }}</strong></article>
+	<article class="concept-stat"><span>تأییدشده</span><strong>{{ approved_count }}</strong></article>
+	<article class="concept-stat"><span>نیازمند بررسی</span><strong>{{ remaining_count }}</strong></article>
 </section>
-<form action="/results/{{ project.project_id }}/concept-review" method="post">
-	<div class="table-scroll panel review-table-wrap"><table class="review-table">
-		<thead><tr><th scope="col">شناسه و شاهد</th><th scope="col">مفهوم</th><th scope="col">کدگذاری</th><th scope="col">ارزیابی</th><th scope="col">تصمیم پژوهشگر</th></tr></thead>
-		<tbody>
+<section class="concept-progress" aria-label="پیشرفت بازبینی">
+	<div class="concept-progress-heading"><strong>پیشرفت بازبینی</strong><span>{{ progress }}٪ · {{ total_count - remaining_count }} از {{ total_count }}</span></div>
+	<div class="concept-progress-track" role="progressbar" aria-valuenow="{{ progress }}" aria-valuemin="0" aria-valuemax="100" aria-label="پیشرفت بازبینی"><span style="width: {{ progress }}%"></span></div>
+</section>
+
+<form id="concept-review-form" class="concept-review-form" action="/results/{{ project.project_id }}/concept-review" method="post" data-concept-review data-project-id="{{ project.project_id }}" data-open-concept="{{ open_concept_id }}">
+	<section class="concept-list-panel" id="concepts" aria-label="فهرست مفاهیم">
+		<div class="concept-list-heading">
+			<div><p class="eyebrow">فهرست بازبینی</p><h2>مفاهیم مصاحبه</h2></div>
+			<span class="concept-result-count" data-result-count>{{ total_count }} مفهوم</span>
+		</div>
+		<div class="concept-review-filters">
+			<label class="concept-search">جست‌وجو در شناسه، عنوان یا متن مفهوم<input type="search" data-concept-search placeholder="مثلاً C001 یا فشار کاری" aria-label="جست‌وجو در مفاهیم"></label>
+			<label>وضعیت بازبینی<select data-concept-filter aria-label="فیلتر وضعیت">
+				<option value="all">همه مفاهیم ({{ total_count }})</option>
+				<option value="pending">نیازمند بررسی ({{ status_counts.pending + status_counts.suggestion }})</option>
+				<option value="suggestion">پیشنهاد اصلاح دارد ({{ status_counts.suggestion }})</option>
+				<option value="approved">تأییدشده ({{ status_counts.approved }})</option>
+				<option value="rejected">ردشده ({{ status_counts.rejected }})</option>
+				<option value="edited">اصلاح‌شده توسط پژوهشگر ({{ status_counts.edited }})</option>
+				<option value="in_progress">در حال بررسی ({{ status_counts.in_progress }})</option>
+				<option value="deferred">به تعویق افتاده ({{ status_counts.deferred }})</option>
+			</select></label>
+			<label>کدگذاری پارادایمی<select data-code-filter aria-label="فیلتر کدگذاری پارادایمی">
+				<option value="all">همه کدگذاری‌ها</option>
+				<option value="شرایط علّی">شرایط علّی</option>
+				<option value="پدیده محوری">پدیده محوری</option>
+				<option value="شرایط زمینه‌ای">شرایط زمینه‌ای</option>
+				<option value="شرایط مداخله‌گر">شرایط مداخله‌گر</option>
+				<option value="راهبردهای کنش و تعامل">راهبردهای کنش و تعامل</option>
+				<option value="پیامدها">پیامدها</option>
+				<option value="نامشخص">نامشخص</option>
+			</select></label>
+		</div>
+
+		<div class="concept-review-list" data-concept-list>
 		{% for row in reviews %}
-		<tr id="concept-{{ row.review.concept_id }}" class="review-concept-row">
-			<td><input type="hidden" name="concept_ids" value="{{ row.review.concept_id }}"><strong>{{ row.review.concept_id }}</strong>{% for paragraph in row.source_paragraphs %}<details class="review-evidence"><summary>{{ paragraph.paragraph_id }} · متن کامل پاراگراف</summary><blockquote>{{ paragraph.text }}</blockquote></details>{% endfor %}<details class="review-evidence"><summary>{{ row.review.paragraph_id }} · شاهد انتخاب‌شده</summary>{% for evidence in row.review.evidence %}<blockquote>{{ evidence.paragraph_id }} «{{ evidence.exact_quote }}»<small>{{ evidence.interpretation }}</small></blockquote>{% endfor %}</details></td>
-			<td><div class="review-field-pair"><div><small class="review-field-label">عنوان اولیه</small><p class="review-original-value">{{ row.review.original_concept }}</p></div><label><span class="review-field-label">پیشنهاد موجزتر/دقیق‌تر · قابل ویرایش</span><input name="suggested_concepts" value="{{ row.edit.get('suggested_concept', row.review.suggested_concept) }}" aria-label="عنوان مفهوم {{ row.review.concept_id }}" required></label></div></td>
-			<td><div class="review-field-pair"><div><small class="review-field-label">کد اولیه</small><p class="review-original-value">{{ row.review.original_code }}</p></div><label><span class="review-field-label">کد پیشنهادی</span><input name="suggested_codes" list="paradigm-code-options" value="{{ row.edit.get('suggested_code', row.review.suggested_code) }}" aria-label="کد پیشنهادی {{ row.review.concept_id }}" required></label></div></td>
-			<td><span class="status-pill">{{ row.review.concept_validity }} · {{ row.review.code_evaluation }}</span><small class="table-sub">اطمینان {{ (row.review.confidence * 100)|round|int }}٪</small><details class="review-evidence"><summary>دلیل پیشنهاد</summary><p>{{ row.review.concept_reason }}</p><p>{{ row.review.code_reason }}</p></details></td>
-			<td><label class="review-note-label">یادداشت<input name="researcher_notes" value="{{ row.edit.get('researcher_note', '') }}" aria-label="یادداشت پژوهشگر {{ row.review.concept_id }}"></label><label class="check-label"><input type="checkbox" name="confirmed_concept_ids" value="{{ row.review.concept_id }}" {% if row.edit.get('confirmed') %}checked{% endif %}> تأیید پژوهشگر</label></td>
-		</tr>
-		{% else %}<tr><td colspan="5">مفهومی برای بازبینی وجود ندارد.</td></tr>{% endfor %}
-		</tbody>
-	</table></div>
+			<article class="concept-review-card" id="concept-{{ row.review.concept_id }}" data-concept-card data-concept-id="{{ row.review.concept_id }}" data-detail-url="/results/{{ project.project_id }}/concept-review/{{ row.review.concept_id }}" data-status="{{ row.status }}" data-code="{{ row.review.suggested_code }}" data-search="{{ row.search_text|forceescape }}">
+				<div class="concept-card-summary">
+					<div class="concept-card-main">
+						<strong class="concept-id">{{ row.review.concept_id }}</strong>
+						<span class="concept-witness">{{ row.review.paragraph_id or 'شاهد نامشخص' }}</span>
+						<div class="concept-card-values">
+							<p><span>عنوان اولیه پژوهشگر</span><strong>{{ row.review.original_concept }}</strong></p>
+							<p><span>عنوان پیشنهادی هوش مصنوعی</span><strong>{% if row.review.concept_change_required %}{{ row.review.suggested_concept }}{% else %}پیشنهاد اصلاح ندارد؛ عنوان اولیه حفظ می‌شود{% endif %}</strong></p>
+							<p><span>کد اولیه پژوهشگر</span><strong>{{ row.review.original_code or 'ثبت نشده' }}</strong></p>
+							<p><span>کد پیشنهادی هوش مصنوعی</span><strong>{% if row.review.code_evaluation == 'revise' %}{{ row.review.suggested_code }}{% elif row.review.code_evaluation == 'confirmed' %}پیشنهاد اصلاح ندارد؛ کد اولیه تأیید شده است{% else %}ارزیابی قطعی نیست؛ نیازمند بررسی پژوهشگر{% endif %}</strong></p>
+						</div>
+					</div>
+					<div class="concept-card-side">
+						<span class="status-pill status-{{ row.status }}">{{ row.status_label }}</span>
+						<button class="button button-secondary concept-open-button" type="button" data-open-concept>مشاهده جزئیات و تصمیم‌گیری</button>
+					</div>
+				</div>
+
+				<div class="concept-detail" data-concept-detail hidden></div>
+			</article>
+		{% else %}
+			<div class="concept-empty-state">مفهومی برای بازبینی وجود ندارد.</div>
+		{% endfor %}
+		</div>
+		<p class="concept-filter-empty" data-filter-empty hidden>مفهومی با این فیلترها پیدا نشد.</p>
+		<nav class="concept-pagination" aria-label="صفحه‌بندی مفاهیم" data-concept-pagination hidden>
+			<button class="button button-secondary" type="button" data-page-previous>صفحه قبل</button>
+			<span data-page-status></span>
+			<button class="button button-secondary" type="button" data-page-next>صفحه بعد</button>
+		</nav>
+	</section>
 	<datalist id="paradigm-code-options"><option value="شرایط علّی"><option value="پدیده محوری"><option value="شرایط زمینه‌ای"><option value="شرایط مداخله‌گر"><option value="راهبردهای کنش و تعامل"><option value="پیامدها"><option value="نامشخص"></datalist>
-	<div class="form-actions"><button class="button button-primary" type="submit">ذخیره اصلاحات پژوهشگر</button><a class="button button-secondary" href="/results/{{ project.project_id }}/interview-analysis">ادامه به تحلیل مصاحبه</a></div>
+	<div class="form-actions concept-save-actions">
+		<button class="button button-primary" type="submit" data-save-active hidden>ذخیره یادداشت و ویرایش‌های پیش‌نویس</button>
+		<a class="button button-secondary" href="/results/{{ project.project_id }}/interview-analysis">ادامه به تحلیل مصاحبه</a>
+	</div>
 </form>
 {% endblock %}
+{% block scripts %}<script src="/static/js/concept-review.js"></script>{% endblock %}

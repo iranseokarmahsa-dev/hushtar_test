@@ -13,6 +13,7 @@ from app.routers import projects as projects_router
 from app.routers import results as results_router
 from app.services.analysis_service import parse_analysis_markdown
 from app.services.prompt_builder import build_prompt
+from app.services.evidence_validation import group_evidence_warnings
 
 
 def as_markdown(payload):
@@ -209,10 +210,15 @@ def test_v2_markdown_upload_separates_pages_and_persists_researcher_edits(monkey
 
 	concept_page = client.get(response.headers["location"])
 	assert concept_page.status_code == 200
-	assert "بازبینی مفاهیم پژوهشگر" in concept_page.text
+	assert "<h1>بازبینی مفاهیم</h1>" in concept_page.text
 	assert "تحلیل مستقل مصاحبه" not in concept_page.text
-	assert "فشار کاری زیاد است" in concept_page.text
-	assert "مدیر گفت: فشار کاری زیاد است." in concept_page.text
+	assert "مدیر گفت: فشار کاری زیاد است." not in concept_page.text
+	assert "data-concept-card" in concept_page.text
+	assert "مشاهده جزئیات و تصمیم‌گیری" in concept_page.text
+	assert "پیشرفت بازبینی" in concept_page.text
+	concept_detail = client.get("/results/project-v2/concept-review/C001")
+	assert "فشار کاری زیاد است" in concept_detail.text
+	assert "مدیر گفت: فشار کاری زیاد است." in concept_detail.text
 
 	saved_concepts = client.post(
 		"/results/project-v2/concept-review",
@@ -234,7 +240,7 @@ def test_v2_markdown_upload_separates_pages_and_persists_researcher_edits(monkey
 	assert analysis_page.status_code == 200
 	assert "فشارهای کاری" in analysis_page.text
 	assert "مقوله‌های اصلی" in analysis_page.text
-	assert "شش مؤلفهٔ پارادایمی" in analysis_page.text
+	assert "مدل پارادایمی و شش مؤلفه" in analysis_page.text
 	assert "SUB01" in analysis_page.text
 	assert "شدت" in analysis_page.text
 	assert "کم تا زیاد" in analysis_page.text
@@ -242,7 +248,13 @@ def test_v2_markdown_upload_separates_pages_and_persists_researcher_edits(monkey
 	assert "REL01" in analysis_page.text
 	assert "مدیریت فشار کاری" in analysis_page.text
 	assert "تفسیر جایگزین" in analysis_page.text
-	assert "/results/project-v2/paradigm" in analysis_page.text
+	assert 'id="analysis-categories" data-analysis-accordion' in analysis_page.text
+	assert 'id="analysis-paradigm" data-analysis-accordion' in analysis_page.text
+	assert "بررسی موارد باقی‌مانده" in analysis_page.text
+	assert "paradigm-canvas" not in analysis_page.text
+	assert "P001 · متن اصلی مصاحبه" in analysis_page.text
+	assert "href=\"/results/project-v2/paradigm\"" not in analysis_page.text
+	assert "رابطه REL01" in analysis_page.text
 
 	saved_analysis = client.post(
 		"/results/project-v2/interview-analysis",
@@ -250,10 +262,19 @@ def test_v2_markdown_upload_separates_pages_and_persists_researcher_edits(monkey
 			"category_ids": ["CAT01"],
 			"category_names": ["فشار کاری سازمانی"],
 			"category_definitions": ["تعریف اصلاح‌شده توسط پژوهشگر."],
+			"category_decisions": ["approved"],
+			"category_decision_reasons": ["تعریف با شواهد مصاحبه هم‌خوان است."],
+			"paradigm_placements": ["causal_conditions"],
+			"placement_reasons": ["شاهد متنی به شرایط علّی اشاره دارد."],
 			"relationship_ids": ["REL01"],
 			"relationship_descriptions": ["رابطه پس از بازبینی پژوهشگر"],
+			"relationship_types": ["interpretive"],
+			"relationship_decisions": ["rejected"],
+			"relationship_decision_reasons": ["برای تأیید رابطه شاهد کافی ثبت نشده است."],
 			"central_phenomenon_title": "",
 			"central_phenomenon_definition": "",
+			"phenomenon_decision": "approved",
+			"phenomenon_decision_reason": "این تصمیم بر اساس شواهد ثبت‌شده است.",
 			"researcher_note": "نیازمند نمونه بیشتر",
 			"confirmed": "true",
 		},
@@ -263,9 +284,15 @@ def test_v2_markdown_upload_separates_pages_and_persists_researcher_edits(monkey
 	assert project["analysis"]["interview_analysis"]["categories"][0]["subcategories"] == output["interview_analysis"]["categories"][0]["subcategories"]
 	assert project["researcher_edits"]["interview_analysis"]["categories"]["CAT01"]["category_name"] == "فشار کاری سازمانی"
 	assert project["researcher_edits"]["interview_analysis"]["confirmed"] is True
+	assert project["researcher_edits"]["interview_analysis"]["categories"]["CAT01"]["decision"] == "approved"
+	assert project["researcher_edits"]["interview_analysis"]["relationships"]["REL01"]["decision"] == "rejected"
+	assert project["researcher_edits"]["interview_analysis"]["central_phenomenon"]["decision"] == "approved"
+	assert project["researcher_edits"]["interview_analysis"]["change_history"]
 
 	updated_page = client.get("/results/project-v2/interview-analysis")
 	assert "فشار کاری سازمانی" in updated_page.text
+	assert 'href="/results/project-v2/paradigm"' in updated_page.text
+	assert client.get("/results/project-v2/paradigm").status_code == 200
 	project_page = client.get("/projects/project-v2")
 	assert project_page.status_code == 200
 	assert "/results/project-v2/concept-review" in project_page.text
@@ -324,6 +351,143 @@ def test_researcher_can_confirm_fuzzy_evidence_inline(monkeypatch):
 	assert quality["all_evidence_verifiable"] is True
 	assert quality["final_status"] == "complete"
 	assert project["researcher_edits"]["evidence_resolutions"][0]["confirmed"] is True
+
+
+def test_grouped_evidence_resolution_updates_all_references_and_records_timestamp(monkeypatch):
+	project, output = make_project_and_output()
+	quote = "فشار کاری زیاد است!"
+	output["concept_reviews"][0]["evidence"][0]["exact_quote"] = quote
+	output["interview_analysis"]["categories"][0]["evidence"][0]["exact_quote"] = quote
+	warnings = [
+		{
+			"stage": "stage1", "record_type": "concept", "record_id": "C001",
+			"paragraph_id": "P001", "exact_quote": quote, "status": "fuzzy_match", "similarity": 80,
+		},
+		{
+			"stage": "stage2", "record_type": "category", "record_id": "CAT01",
+			"paragraph_id": "P001", "exact_quote": quote, "status": "fuzzy_match", "similarity": 80,
+		},
+	]
+	quality = output["interview_analysis"]["quality_audit"]
+	quality.update({
+		"all_evidence_verifiable": False,
+		"missing_data_detected": True,
+		"final_status": "incomplete",
+		"evidence_warnings": warnings,
+	})
+	output["analysis_status"] = "incomplete"
+	project["analysis"] = output
+	monkeypatch.setattr(results_router, "get_project", lambda _: project)
+	monkeypatch.setattr(results_router, "update_project", lambda _project_id, **changes: project.update(changes) or project)
+	monkeypatch.setattr(results_router, "mark_synthesis_runs_stale_for_source", lambda _project_id: None)
+	issue_id = group_evidence_warnings(warnings)[0]["issue_id"]
+
+	response = TestClient(app, follow_redirects=False).post(
+		"/results/project-v2/evidence-resolution",
+		data={
+			"issue_id": issue_id,
+			"action": "save_manual",
+			"replacement_quote": "مدیر گفت: فشار کاری زیاد است.",
+			"decision_note": "هر دو ارجاع به همین پاراگراف مربوط‌اند.",
+		},
+	)
+
+	assert response.status_code == 303
+	assert output["concept_reviews"][0]["evidence"][0]["exact_quote"] == "مدیر گفت: فشار کاری زیاد است."
+	assert output["interview_analysis"]["categories"][0]["evidence"][0]["exact_quote"] == "مدیر گفت: فشار کاری زیاد است."
+	assert quality["evidence_warnings"] == []
+	resolution = project["researcher_edits"]["evidence_resolutions"][0]
+	assert len(resolution["references"]) == 2
+	assert resolution["note"] == "هر دو ارجاع به همین پاراگراف مربوط‌اند."
+	assert resolution["decided_at"]
+
+
+def test_review_issue_lifecycle_stores_terminal_decision_history(monkeypatch):
+	project, output = make_project_and_output()
+	output["interview_analysis"]["researcher_review"] = [{
+		"item_type": "category",
+		"item_id": "CAT01",
+		"issue": "پیشنهاد بازبینی",
+		"reason": "پیشنهاد نیازمند تصمیم است.",
+		"suggested_action": "بررسی شواهد",
+	}]
+	project["analysis"] = output
+	monkeypatch.setattr(results_router, "get_project", lambda _: project)
+	monkeypatch.setattr(results_router, "update_project", lambda _project_id, **changes: project.update(changes) or project)
+	monkeypatch.setattr(results_router, "mark_synthesis_runs_stale_for_source", lambda _project_id: None)
+
+	response = TestClient(app, follow_redirects=False).post(
+		"/results/project-v2/review-issue",
+		data={"issue_id": "researcher-review-0", "status": "rejected", "note": "پیشنهاد با شواهد سازگار نیست."},
+	)
+
+	assert response.status_code == 303
+	lifecycle = project["researcher_edits"]["review_issue_lifecycle"]["researcher-review-0"]
+	assert lifecycle["status"] == "rejected"
+	assert lifecycle["note"] == "پیشنهاد با شواهد سازگار نیست."
+	assert lifecycle["history"][0]["changed_at"]
+
+
+def test_category_change_requires_dependent_relationship_to_be_re_reviewed(monkeypatch):
+	project, output = make_project_and_output()
+	output["interview_analysis"]["relationships"] = [{
+		"relationship_id": "REL01",
+		"source_category_id": "CAT01",
+		"target_category_id": "CAT01",
+		"relationship_type": "interpretive",
+		"description": "ارتباط مفهومی",
+		"supporting_concept_ids": ["C001"],
+		"evidence": [{
+			"paragraph_id": "P001",
+			"exact_quote": "فشار کاری زیاد است",
+			"interpretation": "پشتیبان رابطه",
+		}],
+		"confidence": 0.8,
+		"needs_researcher_review": False,
+	}]
+	project["analysis"] = output
+	project["researcher_edits"] = {
+		"interview_analysis": {
+			"categories": {
+				"CAT01": {
+					"category_name": "فشارهای کاری",
+					"definition": "تعریف قبلی",
+					"decision": "approved",
+				},
+			},
+			"paradigm_placements": {"CAT01": {"component_key": "causal_conditions"}},
+			"relationships": {
+				"REL01": {
+					"description": "ارتباط مفهومی",
+					"relationship_type": "interpretive",
+					"decision": "approved",
+				},
+			},
+		},
+	}
+	monkeypatch.setattr(results_router, "get_project", lambda _: project)
+	monkeypatch.setattr(results_router, "update_project", lambda _project_id, **changes: project.update(changes) or project)
+	monkeypatch.setattr(results_router, "mark_synthesis_runs_stale_for_source", lambda _project_id: None)
+
+	response = TestClient(app, follow_redirects=False).post(
+		"/results/project-v2/interview-analysis",
+		data={
+			"category_ids": "CAT01",
+			"category_names": "فشارهای شغلی",
+			"category_definitions": "تعریف تازه",
+			"relationship_ids": "REL01",
+			"relationship_descriptions": "ارتباط مفهومی",
+			"relationship_types": "interpretive",
+			"relationship_decisions": "approved",
+			"relationship_decision_reasons": "تأیید قبلی",
+		},
+	)
+
+	assert response.status_code == 303
+	relationship_edit = project["researcher_edits"]["interview_analysis"]["relationships"]["REL01"]
+	assert relationship_edit["decision"] == ""
+	assert relationship_edit["review_status"] == "needs_reverification"
+	assert relationship_edit["decision_history"][-1]["status"] == "needs_reverification"
 
 
 def test_researcher_can_confirm_fuzzy_subcategory_evidence_inline(monkeypatch):
@@ -420,12 +584,12 @@ def test_researcher_can_confirm_a_structural_repair_inline(monkeypatch):
 	client = TestClient(app, follow_redirects=False)
 
 	page = client.get("/results/project-v2/interview-analysis?show_quality=1")
-	assert "موارد نیازمند تأیید" in page.text
+	assert "رکوردهای ساختاری برای اصلاح" in page.text
 	assert "تأیید" in page.text
 	assert "REL01" in page.text
 	response = client.post(
 		"/results/project-v2/record-resolution",
-		data={"resolution_id": resolution_id},
+		data={"resolution_id": resolution_id, "decision_note": "اصلاح ساختاری تأیید شد."},
 	)
 
 	assert response.status_code == 303
@@ -462,10 +626,10 @@ def test_nonrepairable_structural_record_has_friendly_one_click_skip(monkeypatch
 	page = client.get("/results/project-v2/interview-analysis?show_quality=1")
 	assert "source_category_id" not in page.text
 	assert "is a required property" not in page.text
-	assert "تأیید و ادامه" in page.text
+	assert "اصلاح / ثبت گزارش" in page.text
 	response = client.post(
 		"/results/project-v2/record-resolution",
-		data={"resolution_id": resolution_id},
+		data={"resolution_id": resolution_id, "decision_note": "رکورد غیرقابل اصلاح کنار گذاشته شد."},
 	)
 
 	assert response.status_code == 303
@@ -518,12 +682,12 @@ def test_legacy_structural_error_recovers_record_from_saved_stage_markdown(monke
 	client = TestClient(app, follow_redirects=False)
 
 	page = client.get("/results/project-v2/interview-analysis?show_quality=1")
-	assert "موارد نیازمند تأیید" in page.text
+	assert "رکوردهای ساختاری برای اصلاح" in page.text
 	assert "ویرایش" in page.text
 	recovered = results_router._recover_structural_record_errors(project)[0]
 	response = client.post(
 		"/results/project-v2/record-resolution",
-		data={"resolution_id": recovered["resolution_id"]},
+		data={"resolution_id": recovered["resolution_id"], "decision_note": "اصلاح بازیابی‌شده تأیید شد."},
 	)
 
 	assert response.status_code == 303
@@ -557,11 +721,11 @@ def test_interview_review_keeps_researcher_save_form_separate_from_inline_forms(
 
 	main_form_start = page.index('<form id="interview-analysis-form"')
 	main_form_end = page.index("</form>", main_form_start)
-	evidence_form_start = page.index('<form id="evidence-auto-0"')
-	save_button = page.index("ذخیره اصلاحات پژوهشگر", main_form_start)
+	evidence_form_start = page.index('<form id="evidence-auto-')
+	save_button = page.index("ذخیره تغییرات", main_form_start)
 
 	assert main_form_start < save_button < main_form_end < evidence_form_start
-	assert 'form="evidence-auto-0"' in page
+	assert 'form="evidence-auto-' in page
 	response = TestClient(app, follow_redirects=False).post(
 		"/results/project-v2/interview-analysis",
 		data={
@@ -571,11 +735,10 @@ def test_interview_review_keeps_researcher_save_form_separate_from_inline_forms(
 			"central_phenomenon_title": "",
 			"central_phenomenon_definition": "",
 			"researcher_note": "بازبینی انجام شد",
-			"confirmed": "true",
 		},
 	)
 	assert response.status_code == 303
-	assert project["researcher_edits"]["interview_analysis"]["confirmed"] is True
+	assert project["researcher_edits"]["interview_analysis"]["confirmed"] is False
 
 
 def test_v2_rejects_unknown_relationship_categories():
@@ -656,11 +819,107 @@ def test_v2_import_downgrades_quality_warnings_and_preserves_raw_output(monkeypa
 	assert any("وضعیت به incomplete تغییر کرد" in item for item in project["analysis"]["interview_analysis"]["quality_audit"]["analysis_limitations"])
 	page = TestClient(app).get("/results/project-v2/concept-review")
 	assert "خروجی برای بازبینی ذخیره شد، اما کامل نیست" in page.text
-	assert '<th scope="col">مفهوم</th>' in page.text
-	assert '<th scope="col">کدگذاری</th>' in page.text
-	assert "پیشنهاد موجزتر/دقیق‌تر · قابل ویرایش" in page.text
-	assert 'name="suggested_concepts"' in page.text
-	assert 'name="suggested_codes"' in page.text
+	assert "مفاهیم مصاحبه" in page.text
+	detail = TestClient(app).get("/results/project-v2/concept-review/C001")
+	assert "عنوان پیشنهادی هوش مصنوعی" in detail.text
+	assert 'name="suggested_concepts"' in detail.text
+	assert 'name="suggested_codes"' in detail.text
+
+
+@pytest.mark.parametrize(
+	("decision", "expected_title", "expected_code", "status_text"),
+	[
+		("approve_suggestion", "تجربه فشار کاری", "شرایط زمینه‌ای", "تأیید شده"),
+		("keep_original", "فشار کاری", "شرایط زمینه‌ای", "پیشنهاد رد شده"),
+		("researcher_edit", "عنوان ویرایش‌شده", "پیامدها", "اصلاح‌شده توسط پژوهشگر"),
+	],
+)
+def test_concept_review_decisions_store_final_values_without_changing_analysis(
+	monkeypatch, decision, expected_title, expected_code, status_text,
+):
+	project, output = make_project_and_output()
+	project["concepts"].append({
+		"concept_id": "C002",
+		"paragraph_ids": ["P001"],
+		"original_concept": "همکاری سازمانی",
+		"original_code": "شرایط علّی",
+	})
+	second_review = deepcopy(output["concept_reviews"][0])
+	second_review.update({
+		"concept_id": "C002",
+		"original_concept": "همکاری سازمانی",
+		"suggested_concept": "تعامل سازمانی",
+		"original_code": "شرایط علّی",
+		"suggested_code": "شرایط زمینه‌ای",
+		"concept_change_required": False,
+		"code_evaluation": "confirmed",
+	})
+	output["concept_reviews"].append(second_review)
+	project["analysis"] = output
+	monkeypatch.setattr(results_router, "get_project", lambda _: project)
+	monkeypatch.setattr(
+		results_router, "update_project",
+		lambda _project_id, **changes: project.update(changes) or project,
+	)
+	monkeypatch.setattr(results_router, "mark_synthesis_runs_stale_for_source", lambda _: None)
+	response = TestClient(app, follow_redirects=False).post(
+		"/results/project-v2/concept-review",
+		data={
+			"concept_ids": ["C001"],
+			"suggested_concepts": ["عنوان ویرایش‌شده"],
+			"suggested_codes": ["پیامدها"],
+			"researcher_notes": ["یادداشت پژوهشگر"],
+			"review_decisions": [""],
+			"decision_action": f"C001|{decision}",
+		},
+	)
+
+	assert response.status_code == 303
+	assert "open=C002" in response.headers["location"]
+	edit = project["researcher_edits"]["concept_reviews"]["C001"]
+	assert edit["decision"] == decision
+	assert edit["final_concept"] == expected_title
+	assert edit["final_code"] == expected_code
+	assert edit["confirmed"] is True
+	assert edit["decided_at"]
+	assert "C002" not in project["researcher_edits"]["concept_reviews"]
+	assert project["analysis"]["concept_reviews"][0]["suggested_concept"] == "تجربه فشار کاری"
+	page = TestClient(app).get(response.headers["location"])
+	assert status_text in page.text
+	assert "50٪" in page.text
+	assert "نیازمند بررسی" in page.text
+	assert "پیشنهاد اصلاح ندارد؛ عنوان اولیه حفظ می‌شود" in page.text
+	assert "پیشنهاد اصلاح ندارد؛ کد اولیه تأیید شده است" in page.text
+	assert 'data-status="pending"' in page.text
+
+
+def test_concept_review_lifecycle_records_deferred_status_and_note(monkeypatch):
+	project, output = make_project_and_output()
+	project["analysis"] = output
+	monkeypatch.setattr(results_router, "get_project", lambda _: project)
+	monkeypatch.setattr(results_router, "update_project", lambda _project_id, **changes: project.update(changes) or project)
+	monkeypatch.setattr(results_router, "mark_synthesis_runs_stale_for_source", lambda _: None)
+
+	response = TestClient(app, follow_redirects=False).post(
+		"/results/project-v2/concept-review",
+		data={
+			"concept_ids": ["C001"],
+			"suggested_concepts": ["فشار کاری"],
+			"suggested_codes": ["شرایط زمینه‌ای"],
+			"researcher_notes": ["برای جلسه بعد نگه داشته شد."],
+			"review_decisions": [""],
+			"review_statuses": ["deferred"],
+		},
+	)
+
+	assert response.status_code == 303
+	edit = project["researcher_edits"]["concept_reviews"]["C001"]
+	assert edit["lifecycle_status"] == "deferred"
+	assert edit["confirmed"] is False
+	assert edit["status_history"][0]["note"] == "برای جلسه بعد نگه داشته شد."
+	assert edit["status_history"][0]["changed_at"]
+	page = TestClient(app).get("/results/project-v2/concept-review")
+	assert "به تعویق افتاده" in page.text
 
 
 def test_v2_accepts_matching_subcategory_ids():

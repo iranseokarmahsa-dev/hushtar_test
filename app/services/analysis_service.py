@@ -14,7 +14,7 @@ from typing import Any
 import yaml
 from jsonschema import Draft202012Validator
 
-from app.services.evidence_validation import collect_evidence_warnings
+from app.services.evidence_validation import apply_auto_evidence_matches, audit_evidence
 from app.services.json_validator import INTERVIEW_ANALYSIS_SCHEMA_PATH, validate_analysis
 from app.services.prompt_builder import build_prompts
 
@@ -577,7 +577,8 @@ def combine_stage_outputs(
 	audit_issues.extend(reference_issues)
 	structural_issues = _find_structural_issues(interview)
 	audit_issues.extend(structural_issues)
-	evidence_warnings = collect_evidence_warnings(stage1, interview, project)
+	evidence_warnings, auto_matched_evidence = audit_evidence(stage1, interview, project)
+	apply_auto_evidence_matches(stage1, interview, auto_matched_evidence)
 	for warning in evidence_warnings:
 		audit_issues.append(
 			f"شاهد {warning['record_type']} {warning['record_id']} نیازمند بازبینی است: "
@@ -634,6 +635,8 @@ def combine_stage_outputs(
 		"final_status": "incomplete",
 		"validation_issues": audit_issues,
 		"evidence_warnings": evidence_warnings,
+		"auto_matched_evidence": auto_matched_evidence,
+		"rejected_evidence_warnings": [],
 		"record_errors": record_errors,
 		"code_model_mismatches": mismatches,
 		"missing_concept_review_ids": sorted(missing_reviews),

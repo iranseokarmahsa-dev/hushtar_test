@@ -6,7 +6,11 @@ from typing import Any
 
 from jsonschema import Draft202012Validator
 
-from app.services.evidence_validation import collect_evidence_warnings
+from app.services.evidence_validation import (
+	apply_auto_evidence_matches,
+	audit_evidence,
+	merge_auto_evidence_matches,
+)
 
 SCHEMA_DIR = Path(__file__).resolve().parents[2] / "schemas"
 SCHEMA_PATH = SCHEMA_DIR / "ai_analysis.schema.json"
@@ -23,6 +27,7 @@ def validate_analysis(payload: dict[str, Any], project: dict[str, Any]) -> None:
 
 
 def _validate_combined_analysis(payload: dict[str, Any], project: dict[str, Any]) -> None:
+	input_status = payload.get("analysis_status")
 	interview_analysis = payload.get("interview_analysis", {})
 	interview_analysis.setdefault("unclassified_concepts", [])
 	model = interview_analysis.get("paradigm_model", {})
@@ -95,6 +100,8 @@ def _validate_combined_analysis(payload: dict[str, Any], project: dict[str, Any]
 	_validate_subcategory_ids(interview_analysis["categories"])
 	category_id_set = set(category_ids)
 	quality_audit = interview_analysis["quality_audit"]
+	previous_missing_data = bool(quality_audit.get("missing_data_detected"))
+	quality_audit.setdefault("rejected_evidence_warnings", [])
 	missing_concept_ids = concept_ids - set(reviewed_ids)
 	if missing_concept_ids:
 		reported_missing_ids = {
@@ -107,28 +114,56 @@ def _validate_combined_analysis(payload: dict[str, Any], project: dict[str, Any]
 	_validate_references(reviews, concept_ids, known_paragraph_ids, category_id_set)
 	_validate_references(interview_analysis, concept_ids, known_paragraph_ids, category_id_set)
 	_validate_evidence_shape(interview_analysis)
-	evidence_warnings = collect_evidence_warnings(
+	evidence_warnings, auto_matched_evidence = audit_evidence(
 		{"concept_reviews": reviews}, interview_analysis, project
 	)
+	apply_auto_evidence_matches({"concept_reviews": reviews}, interview_analysis, auto_matched_evidence)
+	auto_matched_evidence = merge_auto_evidence_matches(
+		quality_audit.get("auto_matched_evidence") or [],
+		auto_matched_evidence,
+	)
+	quality_audit["auto_matched_evidence"] = auto_matched_evidence
 	quality_audit["evidence_warnings"] = evidence_warnings
-	if evidence_warnings:
-		quality_audit["all_evidence_verifiable"] = False
-		quality_audit["missing_data_detected"] = True
-		quality_audit["final_status"] = "incomplete"
-		payload["analysis_status"] = "incomplete"
-		quality_audit.setdefault("validation_issues", []).extend(
-			f"شاهد {item['record_type']} {item['record_id']} نیازمند بازبینی است: {item['status']}."
-			for item in evidence_warnings
-		)
-		for warning in evidence_warnings:
-			if warning["stage"] == "stage1":
-				for review in reviews:
-					if review.get("concept_id") == warning["record_id"]:
-						review["needs_researcher_review"] = True
-	else:
-		quality_audit["all_evidence_verifiable"] = quality_audit["all_evidence_verifiable"] and True
+	quality_audit["validation_issues"] = [
+		issue for issue in quality_audit.get("validation_issues", [])
+		if not (issue.startswith("شاهد ") and "نیازمند بازبینی است:" in issue)
+	]
+	quality_audit["validation_issues"].extend(
+		f"شاهد {item['record_type']} {item['record_id']} نیازمند بازبینی است: {item['status']}."
+		for item in evidence_warnings
+	)
+	quality_audit["all_evidence_verifiable"] = not evidence_warnings and not quality_audit["rejected_evidence_warnings"]
+	for warning in evidence_warnings:
+		if warning["stage"] == "stage1":
+			for review in reviews:
+				if review.get("concept_id") == warning["record_id"]:
+					review["needs_researcher_review"] = True
 	for warning in evidence_warnings:
 		_add_evidence_warning_review(interview_analysis, warning)
+	quality_audit["missing_data_detected"] = bool(
+		quality_audit.get("record_errors")
+		or evidence_warnings
+		or quality_audit.get("rejected_evidence_warnings")
+		or quality_audit["validation_issues"]
+		or quality_audit.get("missing_concept_review_ids")
+		or quality_audit.get("missing_category_assignment_ids")
+		or (previous_missing_data and not auto_matched_evidence)
+	)
+	quality_audit["final_status"] = (
+		"complete"
+		if quality_audit["all_concepts_reviewed"]
+		and quality_audit["all_ids_preserved"]
+		and quality_audit["all_evidence_verifiable"]
+		and not quality_audit["unsupported_relationships_detected"]
+		and not quality_audit["contradictions_detected"]
+		and not quality_audit["missing_data_detected"]
+		else "incomplete"
+	)
+	payload["analysis_status"] = quality_audit["final_status"]
+	if input_status == "complete" and payload["analysis_status"] == "incomplete":
+		limitation = "وضعیت به incomplete تغییر کرد، چون کنترل کیفیت یک هشدار یا ناسازگاری گزارش کرده است."
+		if limitation not in quality_audit["analysis_limitations"]:
+			quality_audit["analysis_limitations"].append(limitation)
 	incomplete_flags = (
 		missing_concept_ids
 		or not quality_audit["all_concepts_reviewed"]
@@ -270,12 +305,10 @@ def _validate_legacy_analysis(payload: dict[str, Any], project: dict[str, Any]) 
 			raise ValueError(f"یال نمودار {edge['edge_id']} به گره ناموجود اشاره می‌کند.")
 
 	quality_audit = payload["quality_audit"]
-	if payload["analysis_status"] != quality_audit["final_status"]:
-		raise ValueError("analysis_status با quality_audit.final_status مطابقت ندارد.")
+	previous_missing_data = bool(quality_audit.get("missing_data_detected"))
+	quality_audit.setdefault("rejected_evidence_warnings", [])
 	if not quality_audit["all_concepts_processed"] or not quality_audit["all_ids_preserved"]:
 		raise ValueError("خروجی همه مفاهیم ورودی را با شناسه‌های اصلی پوشش نمی‌دهد.")
-	if not quality_audit["all_evidence_verifiable"]:
-		raise ValueError("خروجی اعلام می‌کند که بخشی از شواهد قابل راستی‌آزمایی نیست.")
 	if payload["analysis_status"] == "complete" and any(
 		quality_audit[field]
 		for field in ("unsupported_relationships_detected", "contradictions_detected", "missing_data_detected")
@@ -284,23 +317,53 @@ def _validate_legacy_analysis(payload: dict[str, Any], project: dict[str, Any]) 
 
 	_validate_references(payload, concept_ids, known_paragraph_ids, category_ids)
 	_validate_evidence_shape(payload)
-	evidence_warnings = collect_evidence_warnings(
+	evidence_warnings, auto_matched_evidence = audit_evidence(
 		{"concept_reviews": payload["concept_reviews"]},
 		{k: v for k, v in payload.items() if k != "concept_reviews"},
 		project,
 	)
+	apply_auto_evidence_matches(
+		{"concept_reviews": payload["concept_reviews"]},
+		{k: v for k, v in payload.items() if k != "concept_reviews"},
+		auto_matched_evidence,
+	)
+	auto_matched_evidence = merge_auto_evidence_matches(
+		payload["quality_audit"].get("auto_matched_evidence") or [],
+		auto_matched_evidence,
+	)
 	payload["quality_audit"]["evidence_warnings"] = evidence_warnings
-	if evidence_warnings:
-		payload["quality_audit"]["all_evidence_verifiable"] = False
-		payload["quality_audit"]["missing_data_detected"] = True
-		payload["quality_audit"]["final_status"] = "incomplete"
-		payload["analysis_status"] = "incomplete"
-		for warning in evidence_warnings:
-			if warning["stage"] == "stage1":
-				for review in payload["concept_reviews"]:
-					if review.get("concept_id") == warning["record_id"]:
-						review["needs_researcher_review"] = True
-			_add_evidence_warning_review(payload, warning)
+	payload["quality_audit"]["auto_matched_evidence"] = auto_matched_evidence
+	payload["quality_audit"]["all_evidence_verifiable"] = (
+		not evidence_warnings
+		and not payload["quality_audit"]["rejected_evidence_warnings"]
+	)
+	for warning in evidence_warnings:
+		if warning["stage"] == "stage1":
+			for review in payload["concept_reviews"]:
+				if review.get("concept_id") == warning["record_id"]:
+					review["needs_researcher_review"] = True
+		_add_evidence_warning_review(payload, warning)
+	quality = payload["quality_audit"]
+	quality["missing_data_detected"] = bool(
+		quality.get("record_errors")
+		or evidence_warnings
+		or quality.get("rejected_evidence_warnings")
+		or quality.get("missing_concept_review_ids")
+		or quality.get("missing_category_assignment_ids")
+		or quality.get("validation_issues")
+		or (previous_missing_data and not auto_matched_evidence)
+	)
+	quality["final_status"] = (
+		"complete"
+		if quality["all_concepts_processed"]
+		and quality["all_ids_preserved"]
+		and quality["all_evidence_verifiable"]
+		and not quality["unsupported_relationships_detected"]
+		and not quality["contradictions_detected"]
+		and not quality["missing_data_detected"]
+		else "incomplete"
+	)
+	payload["analysis_status"] = quality["final_status"]
 
 
 def _validate_references(

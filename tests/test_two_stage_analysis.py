@@ -12,6 +12,7 @@ from app.services.analysis_service import (
 	parse_analysis_markdown,
 	parse_stage_markdown,
 )
+from app.services.evidence_validation import audit_evidence, group_evidence_warnings
 from app.services.export_service import create_excel, create_markdown_report
 from app.services.prompt_builder import build_prompts, parse_project_markdown
 
@@ -134,12 +135,48 @@ def test_stage_markdown_accepts_raw_yaml_and_preserves_unverifiable_quotes_for_a
 	parsed = parse_stage_markdown(_markdown(first), project, "stage1")
 	assert parsed["concept_reviews"][0]["evidence"][0]["exact_quote"] == "فشار کاری زیادی است"
 	result = combine_stage_outputs(project, parsed, second)
-	warning = result["interview_analysis"]["quality_audit"]["evidence_warnings"][0]
-	assert warning["status"] == "fuzzy_match"
-	assert warning["similarity"] >= 90
-	assert result["concept_reviews"][0]["needs_researcher_review"] is True
-	assert result["analysis_status"] == "incomplete"
-	assert result["concept_reviews"][0]["evidence"][0]["exact_quote"] == "فشار کاری زیادی است"
+	quality = result["interview_analysis"]["quality_audit"]
+	assert quality["evidence_warnings"] == []
+	assert quality["auto_matched_evidence"][0]["status"] == "auto_matched"
+	assert quality["auto_matched_evidence"][0]["similarity"] >= 90
+	assert result["concept_reviews"][0]["needs_researcher_review"] is False
+	assert result["concept_reviews"][0]["evidence"][0]["exact_quote"] in project["paragraphs"][0]["text"]
+	assert quality["auto_matched_evidence"][0]["exact_quote"] == "فشار کاری زیادی است"
+
+
+def test_evidence_matching_keeps_ambiguous_quotes_for_researcher_and_aggregates_duplicates():
+	project = _project()
+	exact_stage = {"concept_reviews": [{
+		"concept_id": "C001",
+		"paragraph_id": "P001",
+		"evidence": [{"paragraph_id": "P001", "exact_quote": "فشار کاری زیاد است"}],
+	}]}
+	assert audit_evidence(exact_stage, {"relationships": []}, project) == ([], [])
+
+	stage1 = {"concept_reviews": [{
+		"concept_id": "C001",
+		"paragraph_id": "P001",
+		"evidence": [{"paragraph_id": "P001", "exact_quote": "کاملا متفاوت"}],
+	}]}
+	interview = {"relationships": [{
+		"relationship_id": "REL01",
+		"evidence": [{"paragraph_id": "P001", "exact_quote": "کاملا متفاوت"}],
+	}]}
+
+	warnings, auto_matches = audit_evidence(stage1, interview, project)
+
+	assert not auto_matches
+	assert len(warnings) == 2
+	assert all(item["status"] == "unmatched" for item in warnings)
+	groups = group_evidence_warnings(warnings)
+	assert len(groups) == 1
+	assert len(groups[0]["references"]) == 2
+
+	stage1["concept_reviews"][0]["evidence"][0]["exact_quote"] = "فشار کاری خیلی زیاد است"
+	ambiguous_warnings, ambiguous_auto = audit_evidence(stage1, {"relationships": []}, project)
+	assert not ambiguous_auto
+	assert ambiguous_warnings[0]["status"] == "fuzzy_match"
+	assert 70 <= ambiguous_warnings[0]["similarity"] < 90
 
 
 def test_stage1_accepts_renderer_escaped_text_and_normalizes_revised_enum():
@@ -480,16 +517,25 @@ def test_stage_import_stores_independent_outputs_then_combines(monkeypatch):
 	client = TestClient(app, follow_redirects=False)
 	prompt_page = client.get("/analysis/project-stage")
 	assert prompt_page.status_code == 200
-	assert "دو پرامپت مستقل" in prompt_page.text
+	assert "متن پرامپت را کپی کنید، به ChatGPT بدهید و خروجی را در قسمت پایین قرار دهید." in prompt_page.text
+	assert "دو پرامپت مستقل" not in prompt_page.text
 	assert "/prompt/stage1.md" in prompt_page.text
-	assert "/prompt/stage2.md" in prompt_page.text
+	assert "/prompt/stage2.md" not in prompt_page.text
 	first = client.post(
 		"/analysis/project-stage/import/stage1",
 		data={"analysis_markdown": _markdown(_stage1(project))},
 	)
 	assert first.status_code == 303
+	assert first.headers["location"] == "/analysis/project-stage#stage-import-stage2"
 	assert "stage1" in project["stage_outputs"] and "stage2" not in project["stage_outputs"]
 	assert project.get("analysis") is None
+	next_step = client.get("/analysis/project-stage")
+	stage1_tag = next(line for line in next_step.text.splitlines() if '<details id="stage-import-stage1"' in line)
+	stage2_tag = next(line for line in next_step.text.splitlines() if '<details id="stage-import-stage2"' in line)
+	assert " open" not in stage1_tag
+	assert " open" in stage2_tag
+	assert "تأیید شد" in next_step.text
+	assert "/prompt/stage2.md" in next_step.text
 
 	second = client.post(
 		"/analysis/project-stage/import/stage2",
@@ -499,6 +545,19 @@ def test_stage_import_stores_independent_outputs_then_combines(monkeypatch):
 	assert second.headers["location"] == "/results/project-stage/concept-review"
 	assert project["analysis"]["analysis_status"] == "complete"
 	assert set(project["raw_analysis"]) == {"stage1", "stage2"}
+
+
+def test_project_landing_after_upload_is_minimal(monkeypatch):
+	project = _project()
+	monkeypatch.setattr(projects_router, "get_project", lambda _: project)
+
+	response = TestClient(app).get("/projects/project-stage")
+
+	assert response.status_code == 200
+	assert "فایل مصاحبه با موفقیت دریافت و آماده‌سازی شد." in response.text
+	assert f'href="/analysis/{project["project_id"]}">دریافت پرامپت هوش مصنوعی</a>' in response.text
+	assert "خطای ساختاری" not in response.text
+	assert "مفهوم دارای کد" not in response.text
 
 
 def test_markdown_input_endpoint_rejects_other_project_id(monkeypatch):

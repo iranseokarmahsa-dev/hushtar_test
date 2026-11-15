@@ -1,0 +1,65 @@
+<input type="hidden" name="concept_ids" value="{{ row.review.concept_id }}">
+<input type="hidden" name="review_decisions" value="{{ row.edit.get('decision', '') }}">
+<div class="concept-detail-meta">
+	<span><b>شناسه مفهوم:</b> {{ row.review.concept_id }}</span>
+	<span><b>شناسه شاهد:</b> {{ row.review.paragraph_id or 'نامشخص' }}</span>
+	<span><b>وضعیت:</b> {{ row.status_label }}</span>
+</div>
+<section class="concept-detail-section">
+	<h4>متن مصاحبه و شواهد</h4>
+	{% for paragraph in row.source_paragraphs %}
+	<article class="concept-source-paragraph">
+		<strong>{{ paragraph.paragraph_id }}</strong>
+		<p data-highlight-quotes="{{ row.review.evidence|selectattr('paragraph_id', 'equalto', paragraph.paragraph_id)|map(attribute='exact_quote')|list|tojson|forceescape }}">{{ paragraph.text }}</p>
+	</article>
+	{% endfor %}
+	{% for evidence in row.review.evidence %}
+	<div class="concept-evidence-quote"><span>{{ evidence.paragraph_id }}</span><strong>«{{ evidence.exact_quote }}»</strong><p>{{ evidence.interpretation }}</p></div>
+	{% endfor %}
+	{% if not row.source_paragraphs and not row.review.evidence %}<p class="muted">شاهد متنی برای این مفهوم ثبت نشده است.</p>{% endif %}
+</section>
+
+<div class="concept-comparison-grid">
+	<section class="concept-detail-section">
+		<h4>عنوان اولیه پژوهشگر</h4><p>{{ row.review.original_concept }}</p>
+		<h4>عنوان پیشنهادی هوش مصنوعی</h4>
+		<p>{% if row.review.concept_change_required %}{{ row.review.suggested_concept }}{% else %}هوش مصنوعی اصلاح عنوانی پیشنهاد نکرده است.{% endif %}</p>
+	</section>
+	<section class="concept-detail-section">
+		<h4>کدگذاری اولیه پژوهشگر</h4><p>{{ row.review.original_code }}</p>
+		<h4>کد پیشنهادی هوش مصنوعی</h4>
+		<p>{% if row.review.code_evaluation == 'revise' %}{{ row.review.suggested_code }}{% elif row.review.code_evaluation == 'confirmed' %}هوش مصنوعی اصلاح کد را پیشنهاد نکرده و کد اولیه را تأیید کرده است.{% else %}ارزیابی هوش مصنوعی درباره کدگذاری قطعی نیست و به بررسی پژوهشگر نیاز دارد.{% endif %}</p>
+		{% if row.review.code_reason %}<p class="concept-reason"><b>دلیل پیشنهاد کد:</b> {{ row.review.code_reason }}</p>{% endif %}
+	</section>
+</div>
+
+<section class="concept-detail-section concept-ai-evaluation">
+	<h4>ارزیابی هوش مصنوعی</h4>
+	<div class="concept-evaluation-meta"><span>{{ row.review.concept_validity }} · {{ row.review.code_evaluation }}</span><span>اطمینان {{ (row.review.confidence * 100)|round|int }}٪</span></div>
+	<div class="concept-confidence-track" role="img" aria-label="میزان اطمینان {{ (row.review.confidence * 100)|round|int }} درصد"><span style="width: {{ (row.review.confidence * 100)|round|int }}%"></span></div>
+	<p class="concept-confidence-note">میزان اطمینان، قطعیت یا صحت نهایی تحلیل را تضمین نمی‌کند.</p>
+	{% if row.review.concept_reason %}<p class="concept-reason"><b>دلیل پیشنهاد عنوان:</b> {{ row.review.concept_reason }}</p>{% endif %}
+	{% if row.review.code_reason %}<p class="concept-reason"><b>توضیح تحلیلی:</b> {{ row.review.code_reason }}</p>{% endif %}
+</section>
+
+<section class="concept-detail-section concept-researcher-edit">
+	<h4>ویرایش و یادداشت پژوهشگر</h4>
+	<div class="concept-edit-fields">
+		<label>عنوان نهایی در صورت ویرایش پژوهشگر<input name="suggested_concepts" value="{{ row.edit.get('final_concept', row.edit.get('suggested_concept', row.review.suggested_concept)) }}" aria-label="عنوان نهایی مفهوم {{ row.review.concept_id }}"></label>
+		<label>کد نهایی در صورت ویرایش پژوهشگر<input name="suggested_codes" list="paradigm-code-options" value="{{ row.edit.get('final_code', row.edit.get('suggested_code', row.review.suggested_code)) }}" aria-label="کد نهایی مفهوم {{ row.review.concept_id }}"></label>
+		<label class="concept-note-field">یادداشت پژوهشگر<textarea name="researcher_notes" rows="2" aria-label="یادداشت پژوهشگر {{ row.review.concept_id }}">{{ row.edit.get('researcher_note', '') }}</textarea></label>
+		<label>چرخه عمر بررسی<select name="review_statuses"><option value="open" {% if row.status in ['pending', 'suggestion'] %}selected{% endif %}>باز و نیازمند بررسی</option><option value="in_progress" {% if row.status == 'in_progress' %}selected{% endif %}>در حال بررسی</option><option value="deferred" {% if row.status == 'deferred' %}selected{% endif %}>به تعویق افتاده</option><option value="approved" {% if row.status == 'approved' %}selected{% endif %}>تأیید پژوهشگر</option><option value="corrected" {% if row.status == 'edited' %}selected{% endif %}>اصلاح‌شده</option><option value="rejected" {% if row.status == 'rejected' %}selected{% endif %}>رد پیشنهاد</option></select></label>
+	</div>
+	<p class="concept-decision-note">تصمیم پژوهشگر جایگزین پیشنهاد هوش مصنوعی نمی‌شود؛ اطلاعات اولیه و پیشنهاد اصلی برای همیشه جداگانه حفظ می‌شوند.</p>
+	{% if row.edit.status_history %}<details class="evidence-disclosure"><summary>تاریخچه تصمیم‌ها و وضعیت‌ها ({{ row.edit.status_history|length }})</summary>{% for item in row.edit.status_history|reverse %}<p><strong>{{ item.status }}</strong> · {{ item.changed_at }}{% if item.note %}<br>یادداشت: {{ item.note }}{% endif %}</p>{% endfor %}</details>{% endif %}
+	<div class="concept-decision-actions" aria-label="ثبت تصمیم پژوهشگر">
+		<button class="button button-primary" type="submit" name="decision_action" value="{{ row.review.concept_id }}|approve_suggestion">تأیید پیشنهاد هوش مصنوعی</button>
+		<button class="button button-secondary" type="submit" name="decision_action" value="{{ row.review.concept_id }}|keep_original">حفظ اطلاعات اولیه و رد پیشنهاد</button>
+		<button class="button button-secondary" type="submit" name="decision_action" value="{{ row.review.concept_id }}|researcher_edit">ثبت ویرایش پژوهشگر</button>
+	</div>
+</section>
+<div class="concept-navigation">
+	<button class="button button-secondary" type="button" data-concept-previous>مفهوم قبلی</button>
+	<button class="button button-secondary" type="button" data-concept-next>مفهوم بعدی</button>
+	<button class="text-button" type="button" data-next-pending>مفهوم بعدیِ نیازمند بررسی</button>
+</div>

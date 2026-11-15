@@ -5,7 +5,7 @@ from fastapi.responses import RedirectResponse
 from fastapi.templating import Jinja2Templates
 
 from app.core.database import create_project, delete_project, get_project, list_projects, update_project
-from app.services.docx_parser import build_quality_report, parse_docx
+from app.services.docx_parser import parse_docx
 from app.services.prompt_builder import parse_project_markdown
 from app.services.synthesis_service import summarize_project_eligibility
 
@@ -42,13 +42,10 @@ def create_project_route(title: str = Form(...), topic: str = Form("")):
 @router.get("/{project_id}")
 def project_detail(request: Request, project_id: str):
 	project = _project_or_404(project_id)
-	quality_report = build_quality_report(
-		project["paragraphs"], project["concepts"], project.get("processing_issues", [])
-	)
 	return templates.TemplateResponse(
 		request=request,
 		name="analysis.html",
-		context={"project": project, "quality_report": quality_report},
+		context={"project": project},
 	)
 
 

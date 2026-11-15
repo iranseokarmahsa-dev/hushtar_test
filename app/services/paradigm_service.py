@@ -33,11 +33,13 @@ def prepare_paradigm_diagram(project: dict[str, Any]) -> dict[str, Any]:
 	model = interview.get("paradigm_model") or {}
 	edits = (project.get("researcher_edits") or {}).get("interview_analysis", {})
 	category_edits = edits.get("categories", {})
+	placement_edits = edits.get("paradigm_placements", {})
 	categories = {
 		item["category_id"]: item
 		for item in interview.get("categories", [])
 		if item.get("category_id")
 	}
+	model = _apply_category_placements(model, categories, placement_edits)
 
 	nodes = []
 	for model_key, label, node_id in COMPONENTS:
@@ -548,22 +550,85 @@ def _prepare_relationship(
 ) -> dict[str, Any]:
 	edit = edit or {}
 	evidence = relation.get("evidence", [])
+	relationship_type = edit.get("relationship_type") or relation.get("relationship_type", "")
 	documented = (
-		relation.get("relationship_type") != "hypothetical"
+		edit.get("decision") != "rejected"
+		and relationship_type != "hypothetical"
 		and not relation.get("needs_researcher_review", False)
 		and bool(evidence)
 	)
+	if edit.get("decision") == "approved":
+		documented = relationship_type != "hypothetical" and bool(evidence)
 	return {
 		"relationship_id": relation.get("relationship_id", ""),
 		"source_category_id": relation.get("source_category_id", ""),
 		"target_category_id": relation.get("target_category_id", ""),
-		"relationship_type": relation.get("relationship_type", ""),
+		"relationship_type": relationship_type,
 		"description": edit.get("description") or relation.get("description", ""),
 		"supporting_concept_ids": _unique(relation.get("supporting_concept_ids", [])),
 		"evidence": evidence,
 		"documented": documented,
 		"needs_researcher_review": relation.get("needs_researcher_review", False),
+		"researcher_decision": edit.get("decision", ""),
 	}
+
+
+def _apply_category_placements(
+	model: dict[str, Any],
+	categories: dict[str, dict[str, Any]],
+	placement_edits: dict[str, dict[str, Any]],
+) -> dict[str, Any]:
+	if not placement_edits:
+		return model
+	updated_model = dict(model)
+	for component_key in (
+		"causal_conditions", "contextual_conditions", "intervening_conditions",
+		"action_interaction_strategies", "consequences",
+	):
+		value = model.get(component_key)
+		if value is None:
+			continue
+		is_mapping = isinstance(value, dict)
+		items = [value] if is_mapping else list(value) if isinstance(value, list) else []
+		filtered = []
+		for item in items:
+			if not isinstance(item, dict):
+				filtered.append(item)
+				continue
+			item = dict(item)
+			category_ids = _category_ids(item)
+			removed_ids = {
+				category_id for category_id in category_ids
+				if placement_edits.get(category_id, {}).get("component_key")
+				and placement_edits[category_id]["component_key"] != component_key
+			}
+			if removed_ids:
+				item["category_ids"] = [category_id for category_id in category_ids if category_id not in removed_ids]
+				if item.get("category_id") in removed_ids:
+					item.pop("category_id")
+				if not item.get("category_ids") and not item.get("category_id") and not item.get("concept_ids") and not item.get("evidence") and not item.get("explanation"):
+					continue
+			filtered.append(item)
+		updated_model[component_key] = filtered[0] if is_mapping and filtered else filtered
+	for category_id, placement in placement_edits.items():
+		component_key = placement.get("component_key")
+		category = categories.get(category_id)
+		if component_key not in {
+			"causal_conditions", "contextual_conditions", "intervening_conditions",
+			"action_interaction_strategies", "consequences",
+		} or category is None:
+			continue
+		value = updated_model.get(component_key) or []
+		items = [value] if isinstance(value, dict) else list(value) if isinstance(value, list) else []
+		if not any(category_id in _category_ids(item) for item in items if isinstance(item, dict)):
+			items.append({
+				"category_id": category_id,
+				"explanation": placement.get("reason", ""),
+				"concept_ids": category.get("concept_ids", []),
+				"evidence": category.get("evidence", []),
+			})
+		updated_model[component_key] = items
+	return updated_model
 
 
 def _node_by_model_key(nodes: list[dict[str, Any]], model_key: str) -> dict[str, Any]:

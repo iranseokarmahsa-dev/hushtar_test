@@ -104,6 +104,29 @@ def make_project():
 	}
 
 
+def make_finalized_project():
+	project = make_project()
+	interview = project["analysis"]["interview_analysis"]
+	interview["quality_audit"] = {
+		"all_concepts_reviewed": True,
+		"all_ids_preserved": True,
+		"all_evidence_verifiable": True,
+		"unsupported_relationships_detected": False,
+		"contradictions_detected": False,
+		"missing_data_detected": False,
+	}
+	project["researcher_edits"]["interview_analysis"] = {
+		"categories": {
+			category["category_id"]: {"decision": "approved"}
+			for category in interview["categories"]
+		},
+		"relationships": {"REL01": {"decision": "approved"}},
+		"central_phenomenon": {"decision": "approved"},
+		"confirmed": True,
+	}
+	return project
+
+
 def test_diagram_resolves_saved_categories_edits_and_relationship_evidence():
 	project = make_project()
 	project["researcher_edits"]["interview_analysis"] = {
@@ -140,6 +163,34 @@ def test_diagram_resolves_saved_categories_edits_and_relationship_evidence():
 	nodes = {node["id"]: node for node in diagram["nodes"]}
 	assert nodes["categories"]["items"][0]["title"] == "فشار اصلاح‌شده"
 	assert not any(edge["source"] == "categories" for edge in diagram["edges"])
+
+
+def test_diagram_applies_researcher_placement_and_relationship_decisions():
+	project = make_project()
+	project["researcher_edits"]["interview_analysis"] = {
+		"paradigm_placements": {
+			"CAT01": {
+				"component_key": "consequences",
+				"reason": "شاهد پیامد را نشان می‌دهد.",
+			},
+		},
+		"relationships": {
+			"REL01": {
+				"relationship_type": "hypothetical",
+				"decision": "rejected",
+				"description": "رابطه ردشده",
+			},
+		},
+	}
+
+	diagram = prepare_paradigm_diagram(project)
+	nodes = {node["id"]: node for node in diagram["nodes"]}
+
+	assert nodes["causal"]["category_ids"] == []
+	assert set(nodes["consequences"]["category_ids"]) == {"CAT01", "CAT03"}
+	assert diagram["relationships"][0]["relationship_type"] == "hypothetical"
+	assert diagram["relationships"][0]["documented"] is False
+	assert diagram["relationships"][0]["researcher_decision"] == "rejected"
 
 
 def test_diagram_accepts_flat_paradigm_input_and_preserves_edge_mappings():
@@ -373,8 +424,37 @@ def test_final_diagram_exports_svg_and_png_from_the_model():
 	assert png.startswith(b"\x89PNG\r\n\x1a\n")
 
 
-def test_paradigm_image_endpoint_returns_download(monkeypatch):
+def test_paradigm_stage_redirects_until_interview_analysis_is_finalized(monkeypatch):
 	project = make_project()
+	monkeypatch.setattr(results_router, "get_project", lambda _project_id: project)
+	client = TestClient(app, follow_redirects=False)
+
+	page = client.get("/results/project-diagram/paradigm")
+	assert page.status_code == 303
+	assert page.headers["location"] == "/results/project-diagram/interview-analysis?show_quality=1"
+
+	export = client.get("/results/project-diagram/paradigm/export/svg")
+	assert export.status_code == 303
+	assert export.headers["location"] == page.headers["location"]
+
+	finalized_but_unplaced = make_finalized_project()
+	finalized_but_unplaced["analysis"]["interview_analysis"]["paradigm_model"] = {
+		"causal_conditions": [],
+		"central_phenomenon": None,
+		"contextual_conditions": [],
+		"intervening_conditions": [],
+		"action_interaction_strategies": [],
+		"consequences": [],
+	}
+	monkeypatch.setattr(
+		results_router, "get_project", lambda _project_id: finalized_but_unplaced
+	)
+	unplaced_page = client.get("/results/project-diagram/paradigm")
+	assert unplaced_page.status_code == 303
+
+
+def test_paradigm_image_endpoint_returns_download(monkeypatch):
+	project = make_finalized_project()
 	monkeypatch.setattr(results_router, "get_project", lambda _project_id: project)
 	monkeypatch.setattr(results_router, "render_paradigm_diagram", lambda _diagram, _format: b"svg")
 	client = TestClient(app, follow_redirects=False)
@@ -397,7 +477,7 @@ def test_diagram_refresh_hash_changes_with_stage_two_edits():
 
 
 def test_paradigm_page_builds_and_rebuilds_without_analysis_execution(monkeypatch):
-	project = make_project()
+	project = make_finalized_project()
 	monkeypatch.setattr(results_router, "get_project", lambda _project_id: project)
 
 	def update_project(_project_id, **changes):
@@ -425,9 +505,7 @@ def test_paradigm_page_builds_and_rebuilds_without_analysis_execution(monkeypatc
 	updated_page = client.get(rebuild.headers["location"])
 	assert "نمودار با آخرین داده‌های ذخیره‌شده به‌روز شد" in updated_page.text
 
-	project["researcher_edits"]["interview_analysis"] = {
-		"central_phenomenon": {"title": "تغییر پس از نمودار"},
-	}
+	project["researcher_edits"]["interview_analysis"]["central_phenomenon"]["title"] = "تغییر پس از نمودار"
 	stale_page = client.get("/results/project-diagram/paradigm")
 	assert "نمودار نیازمند به‌روزرسانی است" in stale_page.text
 	assert "تغییر پس از نمودار" in stale_page.text

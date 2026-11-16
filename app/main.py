@@ -8,8 +8,17 @@ from starlette.middleware.sessions import SessionMiddleware
 from app.core.config import ADMIN_PASSWORD, ENVIRONMENT, SECRET_KEY
 from app.routers import analysis, auth, dashboard, exports, projects, results, synthesis
 
+class RevalidatedStaticFiles(StaticFiles):
+	"""Force browsers to revalidate so updated CSS/JS is picked up immediately."""
+
+	async def get_response(self, path, scope):
+		response = await super().get_response(path, scope)
+		response.headers["Cache-Control"] = "no-cache"
+		return response
+
+
 app = FastAPI(title="Hooshyar")
-app.mount("/static", StaticFiles(directory="app/static"), name="static")
+app.mount("/static", RevalidatedStaticFiles(directory="app/static"), name="static")
 
 for router in (auth.router, dashboard.router, projects.router, synthesis.router, analysis.router, results.router, exports.router):
     app.include_router(router)

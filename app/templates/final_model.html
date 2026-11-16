@@ -92,6 +92,7 @@
 {% endif %}
 <script type="application/json" id="paradigm-data">{{ diagram|tojson }}</script>
 {% endif %}
+{% if coding_table %}{% set export_base = '/synthesis/runs/' ~ run_id ~ '/final-model/coding-table' %}{% include "_coding_table.html" %}{% endif %}
 {% if can_build %}
 <section class="panel">
 	<h2>پیش‌نیازهای تأییدشده و ممیزی</h2>

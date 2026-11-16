@@ -1,11 +1,86 @@
 {% extends "base.html" %}
 {% block title %}تحلیل محوری مصاحبه | {{ project.title }}{% endblock %}
 {% block content %}
+{% macro suggested_card(item) %}
+{% set form_id = 'review-resolve-' ~ item.position %}
+{% set evidence_form = 'evidence-manual-' ~ item.group.issue_id if item.group else '' %}
+<article class="review-card" id="{{ item.group.anchor if item.group else 'review-card-' ~ item.position }}">
+	<div class="review-card-head"><strong>{{ item.label }}</strong></div>
+	{% if item.form_type == 'evidence' %}
+	<p class="review-card-detail">{{ item.group.references|length }} ارجاع · {{ item.group.paragraph_id }} · {{ item.group.status }}{% if item.group.similarity is not none %} · شباهت {{ item.group.similarity }}٪{% endif %}</p>
+	<div class="evidence-resolution-pair"><div><small>نقل‌قول ثبت‌شده</small><blockquote>{{ item.group.exact_quote or 'نقل‌قولی ثبت نشده است.' }}</blockquote></div><div><small>متن اصلی پاراگراف</small><blockquote>{{ item.group.source_text or 'پاراگراف مرجع پیدا نشد.' }}</blockquote></div></div>
+	{% else %}
+	<p class="review-card-detail">{{ item.detail }}</p>
+	{% endif %}
+	{% if item.hint %}<p class="review-card-hint">{{ item.hint }}</p>{% endif %}
+	<div class="review-card-actions">
+		{% if item.form_type == 'evidence' %}<button class="button button-approve" type="submit" form="evidence-auto-{{ item.group.issue_id }}">تأیید</button>
+		{% else %}<button class="button button-approve" type="submit" form="{{ form_id }}" name="action" value="approve" formnovalidate>تأیید</button>{% endif %}
+		{% if item.can_correct %}
+		<details class="review-correct"><summary class="review-correct-toggle">نیاز به اصلاح دستی</summary>
+			<div class="review-correct-box">
+				{% if item.form_type == 'category' %}
+				<label>عنوان مقوله<input name="category_name" form="{{ form_id }}" value="{{ item['values'].name }}" required></label>
+				<label>تعریف مقوله<textarea name="category_definition" form="{{ form_id }}" rows="3" required>{{ item['values'].definition }}</textarea></label>
+				{% elif item.form_type == 'relationship' %}
+				<label>شرح رابطه<textarea name="relationship_description" form="{{ form_id }}" rows="3" required>{{ item['values'].description }}</textarea></label>
+				<label>نوع رابطه<select name="relationship_type" form="{{ form_id }}"><option value="direct" {% if item['values'].type == 'direct' %}selected{% endif %}>مستقیم · شواهد روشن</option><option value="interpretive" {% if item['values'].type == 'interpretive' %}selected{% endif %}>تفسیری · استنباط قابل ردیابی</option><option value="hypothetical" {% if item['values'].type == 'hypothetical' %}selected{% endif %}>فرضی · شواهد ناکافی</option></select></label>
+				{% elif item.form_type == 'phenomenon' %}
+				<label>عنوان پدیده<input name="phenomenon_title" form="{{ form_id }}" value="{{ item['values'].title }}" required></label>
+				<label>تعریف پدیده<textarea name="phenomenon_definition" form="{{ form_id }}" rows="3" required>{{ item['values'].definition }}</textarea></label>
+				{% elif item.form_type == 'concept' %}
+				<label>عنوان مفهوم<input name="concept_title" form="{{ form_id }}" value="{{ item['values'].title }}" required></label>
+				<label>کد مفهوم<input name="concept_code" form="{{ form_id }}" value="{{ item['values'].code }}" required></label>
+				{% elif item.form_type == 'evidence' %}
+				<label>نقل‌قول دقیق و پیوسته از متن اصلی<textarea name="replacement_quote" form="{{ evidence_form }}" rows="3" required>{{ item.group.suggested_quote }}</textarea><small class="review-card-hint">نقل‌قول باید عیناً از متن اصلی بالا باشد؛ نزدیک‌ترین بخش متن به‌صورت پیش‌فرض پر شده است و می‌توانید آن را کوتاه کنید.</small></label>
+				{% endif %}
+				{% if item.form_type != 'evidence' %}<label>یادداشت (اختیاری)<textarea name="note" form="{{ form_id }}" rows="2"></textarea></label>{% endif %}
+				<div class="review-correct-actions">
+					<button class="button button-primary" type="submit" form="{{ evidence_form or form_id }}" name="action" value="{{ 'save_manual' if item.form_type == 'evidence' else 'correct' }}">ذخیره اصلاحیه</button>
+					{% if item.can_reject %}<button class="button button-danger" type="submit" form="{{ evidence_form or form_id }}" name="action" value="reject" formnovalidate>ثبت نظر مخالف</button>{% endif %}
+				</div>
+			</div>
+		</details>
+		{% endif %}
+		{% if item.form_type == 'evidence' %}<a class="review-card-link" href="/analysis/{{ project.project_id }}#stage-import-{{ item.group.references[0].stage }}">بازورود خروجی مرحله</a>{% endif %}
+	</div>
+</article>
+{% endmacro %}
+{% macro manual_card(item) %}
+{% set form_id = 'review-resolve-' ~ item.position %}
+{% set evidence_form = 'evidence-manual-' ~ item.group.issue_id if item.group else '' %}
+<article class="review-card is-manual" id="{{ item.group.anchor if item.group else 'review-card-' ~ item.position }}">
+	<div class="review-card-head"><strong>{{ item.label }}</strong></div>
+	{% if item.form_type == 'evidence' %}
+	<p class="review-card-detail">{{ item.group.references|length }} ارجاع · {{ item.group.paragraph_id }} · نقل‌قول ثبت‌شده در متن مصاحبه پیدا نشد.</p>
+	<div class="evidence-resolution-pair"><div><small>نقل‌قول ثبت‌شده</small><blockquote>{{ item.group.exact_quote or 'نقل‌قولی ثبت نشده است.' }}</blockquote></div><div><small>متن اصلی پاراگراف</small><blockquote>{{ item.group.source_text or 'پاراگراف مرجع پیدا نشد.' }}</blockquote></div></div>
+	{% else %}
+	<p class="review-card-detail">{{ item.detail }}</p>
+	{% endif %}
+	{% if item.hint %}<p class="review-card-hint">{{ item.hint }}</p>{% endif %}
+	<div class="review-manual-fields">
+		{% if item.form_type == 'phenomenon' %}
+		<label>عنوان پدیده محوری<input name="phenomenon_title" form="{{ form_id }}" placeholder="عنوان پدیده را بنویسید" required></label>
+		<label>مقوله‌ی مرتبط<select name="phenomenon_category" form="{{ form_id }}" required><option value="">انتخاب کنید</option>{% for row in categories %}<option value="{{ row.item.category_id }}">{{ row.item.category_id }} · {{ row.edit.get('category_name', row.item.category_name) }}</option>{% endfor %}</select></label>
+		<label>تعریف کوتاه (اختیاری)<textarea name="phenomenon_definition" form="{{ form_id }}" rows="2"></textarea></label>
+		{% elif item.form_type == 'placement' %}
+		<label>جایگاه در مدل پارادایمی<select name="placement" form="{{ form_id }}" required><option value="">انتخاب کنید</option>{% for component_key, component_label in paradigm_labels %}{% if component_key != 'central_phenomenon' %}<option value="{{ component_key }}">{{ component_label }}</option>{% endif %}{% endfor %}<option value="unassigned">نامشخص / بدون جایگاه</option></select></label>
+		{% elif item.form_type == 'relationship' %}
+		<label>نظر یا دلیل شما (اختیاری)<textarea name="note" form="{{ form_id }}" rows="2"></textarea></label>
+		{% elif item.form_type == 'evidence' %}
+		<label>نقل‌قول دقیق و پیوسته از متن اصلی<textarea name="replacement_quote" form="{{ evidence_form }}" rows="3" required>{{ item.group.suggested_quote }}</textarea><small class="review-card-hint">نقل‌قول باید عیناً از متن اصلی بالا باشد؛ نزدیک‌ترین بخش متن به‌صورت پیش‌فرض پر شده است و می‌توانید آن را کوتاه کنید.</small></label>
+		{% endif %}
+	</div>
+	<div class="review-manual-actions">
+		<button class="button button-primary" type="submit" form="{{ evidence_form or form_id }}" name="action" value="{{ 'save_manual' if item.form_type == 'evidence' else 'reject' if item.form_type == 'relationship' else 'correct' }}">ثبت و ذخیره</button>
+		{% if item.form_type == 'evidence' %}<button class="button button-danger" type="submit" form="{{ evidence_form }}" name="action" value="reject" formnovalidate>رد پیشنهاد</button>{% endif %}
+	</div>
+</article>
+{% endmacro %}
 <div class="breadcrumbs"><a href="/projects">تاریخچه</a><span>/</span><span>{{ project.title }}</span></div>
 <header class="analysis-page-header">
 	<div><p class="eyebrow">{{ project.title }}</p><h1>تحلیل محوری مصاحبه</h1><p class="lede">مصاحبه {{ project.interview_id or project.title }} · مرحله دوم تحلیل</p><span class="analysis-review-state">در حال بررسی</span></div>
 	<div class="analysis-header-actions">
-		<a class="button button-secondary" href="#analysis-review">بررسی موارد باقی‌مانده ({{ review_issues|length }})</a>
 		<a class="button button-secondary" href="/projects/{{ project.project_id }}">بازگشت به پروژه</a>
 	</div>
 </header>
@@ -19,41 +94,24 @@
 	{% endif %}
 </nav>
 {% if request.query_params.get('saved') %}<p class="alert alert-success" role="status">اصلاحات تحلیل مصاحبه ذخیره شد.</p>{% endif %}
+{% if request.query_params.get('error') == 'quote_mismatch' %}<p class="alert alert-warning" role="alert">متن واردشده عیناً در پاراگراف اصلی وجود ندارد. بخشی از «متن اصلی پاراگراف» را کپی کنید یا همان متن پیش‌فرض را ذخیره کنید.</p>{% endif %}
 {% if analysis.quality_audit.analysis_limitations %}
 <details class="analysis-notice panel"><summary>محدودیت‌های تحلیل ({{ analysis.quality_audit.analysis_limitations|length }})</summary><ul>{% for item in analysis.quality_audit.analysis_limitations %}<li>{{ item }}</li>{% endfor %}</ul></details>
 {% endif %}
-<section class="analysis-stat-grid" aria-label="خلاصه وضعیت تحلیل">
-	<article><span>مقوله‌های اصلی</span><strong>{{ categories|length }}</strong></article>
-	<article><span>زیرمقوله‌ها</span><strong>{{ subcategory_count }}</strong></article>
-	<article><span>روابط شناسایی‌شده</span><strong>{{ relationships|length }}</strong></article>
-	<article><span>مؤلفه‌های پارادایمی</span><strong>{{ paradigm_components|length }}</strong></article>
-	<article class="{% if review_issues %}has-review-issues{% endif %}"><span>نیازمند بررسی</span><strong>{{ review_issues|length }}</strong></article>
-</section>
-<section class="analysis-progress" aria-label="پیشرفت بازبینی">
-	<div><strong>پیشرفت بررسی و تصمیم‌گیری</strong><span>{{ review_progress }}٪ · {{ reviewed_count }} از {{ review_total }} مورد</span></div>
-	<div class="analysis-progress-track" role="progressbar" aria-valuenow="{{ review_progress }}" aria-valuemin="0" aria-valuemax="100"><span style="width: {{ review_progress }}%"></span></div>
-	<small>پیشنهاد هوش مصنوعی به معنی تأیید پژوهشگر نیست.</small>
-</section>
-<nav class="analysis-quick-access" aria-label="دسترسی سریع">
-	<strong>دسترسی سریع</strong>
-	<a href="#analysis-categories">مقوله‌های اصلی</a>
-	<a href="#subcategory-browser">زیرمقوله‌ها</a>
-	<a href="#analysis-paradigm">شش مؤلفه پارادایمی</a>
-	<a href="#analysis-relationships">روابط شناسایی‌شده</a>
-	<a href="#analysis-review">موارد نیازمند بررسی</a>
-</nav>
-
+{% set open_count = review_issues|length %}
+{% set active_tab = 'review' if (request.query_params.get('show_quality') or request.query_params.get('tab') == 'review') else (request.query_params.get('tab') if request.query_params.get('tab') in ['relationships', 'coding'] else 'model') %}
+<p class="analysis-status-bar" role="status">
+	<span>{{ categories|length }} مقوله</span><span>{{ subcategory_count }} زیرمقوله</span><span>{{ relationships|length }} رابطه</span>
+	<strong class="{% if open_count %}has-open{% endif %}">{% if open_count %}{{ open_count }} مورد در انتظار تصمیم{% else %}همه موارد تعیین تکلیف شده است{% endif %}</strong>
+</p>
+<div class="analysis-tabs" role="tablist" aria-label="بخش‌های تحلیل" data-analysis-tabs>
+	<a role="tab" id="tab-button-model" href="?tab=model" aria-controls="tab-model" aria-selected="{{ 'true' if active_tab == 'model' else 'false' }}" data-tab="model">مدل پارادایمی و مقولات</a>
+	<a role="tab" id="tab-button-relationships" href="?tab=relationships" aria-controls="tab-relationships" aria-selected="{{ 'true' if active_tab == 'relationships' else 'false' }}" data-tab="relationships">ارتباطات و روابط <span class="count-tag">{{ relationships|length }}</span></a>
+	<a role="tab" id="tab-button-review" href="?tab=review" aria-controls="analysis-review" aria-selected="{{ 'true' if active_tab == 'review' else 'false' }}" data-tab="review">موارد نیازمند بررسی پژوهشگر {% if open_count %}<span class="count-tag review-count-tag">{{ open_count }}</span>{% endif %}</a>
+	<a role="tab" id="tab-button-coding" href="?tab=coding" aria-controls="tab-coding" aria-selected="{{ 'true' if active_tab == 'coding' else 'false' }}" data-tab="coding">جدول جامع کدگذاری</a>
+</div>
 <form id="interview-analysis-form" action="/results/{{ project.project_id }}/interview-analysis" method="post" class="analysis-dashboard">
-	{% if review_issues %}
-	<section class="analysis-review-preview" aria-label="پیش‌نمایش موارد نیازمند بررسی">
-		<div><div><p class="eyebrow">دسترسی سریع</p><h2>{{ review_issues|length }} مورد برای بررسی پژوهشگر</h2></div><a class="button button-secondary" href="#analysis-review">مشاهده فهرست کامل</a></div>
-		<div class="analysis-review-preview-list">
-			{% for item in review_issues[:4] %}<a href="#{{ item.anchor }}" data-open-target="{{ item.anchor }}" data-review-kind="{{ item.kind }}"><span class="review-severity is-{{ item.severity }}">{{ 'مهم' if item.severity == 'high' else 'بررسی' }}</span><strong>{{ item.label }}</strong><small>{{ item.detail }}</small></a>{% endfor %}
-			{% if review_issues|length > 4 %}<a class="analysis-review-more" href="#analysis-review">و {{ review_issues|length - 4 }} مورد دیگر · مشاهده همه</a>{% endif %}
-		</div>
-	</section>
-	{% endif %}
-
+	<section class="analysis-tab-panel" role="tabpanel" id="tab-model" aria-labelledby="tab-button-model" data-tab-panel="model" {% if active_tab != 'model' %}hidden{% endif %}>
 	<div class="analysis-accordion-stack">
 		<details class="analysis-accordion" id="analysis-categories" data-analysis-accordion>
 			<summary><span class="analysis-accordion-index">۱</span><span><strong>مقوله‌های اصلی و زیرمقوله‌ها</strong><small>{{ categories|length }} مقوله · {{ subcategory_count }} زیرمقوله · برای جزئیات، یک مقوله را باز کنید</small></span><span class="count-tag">{{ categories|length }}</span></summary>
@@ -67,6 +125,7 @@
 						<div class="category-provenance"><div><small>پیشنهاد اولیه هوش مصنوعی</small><strong>{{ row.item.category_name }}</strong><p>{{ row.item.definition }}</p></div><div><small>نسخه فعلی پژوهشگر</small><strong>{{ row.edit.get('category_name', row.item.category_name) }}</strong><p>{{ row.edit.get('definition', row.item.definition) }}</p></div></div>
 						<div class="category-metadata"><span>اطمینان هوش مصنوعی {{ (row.item.confidence * 100)|round|int }}٪</span><span>بازبینی هوش مصنوعی: {{ 'لازم' if row.item.needs_researcher_review else 'گزارش نشده' }}</span></div>
 						{% if row.item.category_reason %}<p class="muted"><strong>دلیل گروه‌بندی:</strong> {{ row.item.category_reason }}</p>{% endif %}
+						<details class="edit-disclosure category-edit-disclosure"><summary>ویرایش عنوان، تعریف و جایگاه مقوله</summary>
 						<div class="category-edit-fields">
 							<input type="hidden" name="category_ids" value="{{ row.item.category_id }}">
 							<label>عنوان مقوله<input name="category_names" value="{{ row.edit.get('category_name', row.item.category_name) }}" required></label>
@@ -79,15 +138,7 @@
 								</select>
 							</label>
 							<label>دلیل اصلاح جایگاه<textarea name="placement_reasons" rows="2" placeholder="مبنای شواهد را توضیح دهید">{{ row.placement.get('reason', '') }}</textarea></label>
-							<label>تصمیم پژوهشگر
-								<select name="category_decisions">
-									<option value="" {% if not row.edit.get('decision') %}selected{% endif %}>نیازمند بررسی</option>
-									<option value="approved" {% if row.edit.get('decision') == 'approved' %}selected{% endif %}>تأیید مقوله</option>
-									<option value="rejected" {% if row.edit.get('decision') == 'rejected' %}selected{% endif %}>رد پیشنهاد</option>
-								</select>
-							</label>
-							<label>دلیل تصمیم / یادداشت تحلیلی<textarea name="category_decision_reasons" rows="2">{{ row.edit.get('decision_reason', '') }}</textarea></label>
-						</div>
+						</div></details>
 						{% if row.item.subcategories %}<section class="category-detail-group"><h3>زیرمقوله‌ها</h3><div class="subcategory-list">{% for subcategory in row.item.subcategories %}
 							<details class="subcategory-card" id="subcategory-{{ subcategory.subcategory_id }}"><summary><span class="entity-id">{{ subcategory.subcategory_id }}</span><strong>{{ subcategory.subcategory_name }}</strong><small>{{ subcategory.concept_ids|length }} مفهوم</small></summary><div><p>{{ subcategory.definition }}</p><div class="supporting-ids"><strong>مفاهیم مرتبط</strong>{% for concept_id in subcategory.concept_ids %}{% if row.concept_anchors.get(concept_id) %}<a class="supporting-chip" href="#{{ row.concept_anchors[concept_id] }}" data-open-target="{{ row.concept_anchors[concept_id] }}">{{ concept_id }}</a>{% else %}<span class="supporting-chip">{{ concept_id }}</span>{% endif %}{% else %}<small>ثبت نشده</small>{% endfor %}</div>{% if subcategory.evidence %}<details class="evidence-disclosure"><summary>شواهد زیرمقوله ({{ subcategory.evidence|length }})</summary>{% for evidence in subcategory.evidence %}<blockquote>{{ evidence.paragraph_id }} «{{ evidence.exact_quote }}»<small>{{ evidence.interpretation }}</small></blockquote>{% endfor %}</details>{% endif %}</div></details>
 						{% endfor %}</div></section>{% endif %}
@@ -131,19 +182,19 @@
 							{% if item.evidence %}<details class="evidence-disclosure"><summary>شواهد متنی ({{ item.evidence|length }})</summary>{% for evidence in item.evidence %}<blockquote>{{ evidence.paragraph_id }} «{{ evidence.exact_quote }}»<small>{{ evidence.interpretation }}</small></blockquote>{% endfor %}</details>{% else %}<p class="muted">برای این مؤلفه شاهد مستقیمی ثبت نشده است.</p>{% endif %}
 						</article>{% endfor %}{% else %}<p class="muted">{% if component.model_key == 'central_phenomenon' %}پدیده محوری در خروجی تحلیل تعیین نشده است.{% else %}در این مؤلفه مقوله‌ای ثبت نشده است.{% endif %}</p>{% endif %}
 						{% if component.model_key == 'central_phenomenon' %}
-						<section class="phenomenon-editor" id="central-phenomenon"><h3>پدیده محوری و تصمیم پژوهشگر</h3>
+						<section class="phenomenon-editor" id="central-phenomenon"><h3>پدیده محوری</h3>
 							{% if phenomenon %}<p><strong>پیشنهاد هوش مصنوعی:</strong> {{ phenomenon.title or 'عنوان ثبت نشده' }}</p><p>{{ phenomenon.definition or 'تعریفی ثبت نشده است.' }}</p>{% if phenomenon.selection_reason %}<p class="muted">دلیل انتخاب: {{ phenomenon.selection_reason }}</p>{% endif %}{% if phenomenon.alternative_interpretations %}<details class="evidence-disclosure"><summary>تفسیرهای جایگزین</summary><ul class="detail-list">{% for alternative in phenomenon.alternative_interpretations %}<li><strong>{{ alternative.title or alternative.interpretation or 'تفسیر جایگزین' }}</strong><span>{{ alternative.description or alternative.reason or alternative }}</span></li>{% endfor %}</ul></details>{% endif %}{% if phenomenon.evidence %}{% for evidence in phenomenon.evidence %}<blockquote>{{ evidence.paragraph_id }} «{{ evidence.exact_quote }}»<small>{{ evidence.interpretation }}</small></blockquote>{% endfor %}{% endif %}{% else %}<p class="alert alert-warning">پدیده محوری در تحلیل اولیه مشخص نشده است؛ پژوهشگر می‌تواند عنوان و تعریف را وارد کند.</p>{% endif %}
-							<details class="edit-disclosure"><summary>ویرایش و تعیین تکلیف پدیده</summary><label>عنوان نهایی پدیده<input name="central_phenomenon_title" value="{{ phenomenon_edit.get('title', phenomenon.get('title') or '') }}"></label><label>تعریف نهایی<textarea name="central_phenomenon_definition" rows="3">{{ phenomenon_edit.get('definition', phenomenon.get('definition', '')) }}</textarea></label><label>تصمیم پژوهشگر<select name="phenomenon_decision"><option value="" {% if not phenomenon_edit.get('decision') %}selected{% endif %}>نیازمند بررسی</option><option value="approved" {% if phenomenon_edit.get('decision') == 'approved' %}selected{% endif %}>تأیید پدیده</option><option value="rejected" {% if phenomenon_edit.get('decision') == 'rejected' %}selected{% endif %}>رد پیشنهاد</option></select></label><label>یادداشت تصمیم<textarea name="phenomenon_decision_reason" rows="2">{{ phenomenon_edit.get('decision_reason', '') }}</textarea></label></details>
+							<details class="edit-disclosure"><summary>ویرایش عنوان و تعریف پدیده</summary><label>عنوان نهایی پدیده<input name="central_phenomenon_title" value="{{ phenomenon_edit.get('title', phenomenon.get('title') or '') }}"></label><label>تعریف نهایی<textarea name="central_phenomenon_definition" rows="3">{{ phenomenon_edit.get('definition', phenomenon.get('definition', '')) }}</textarea></label></details>
 						</section>
 						{% endif %}
 					</div>
 				</details>{% endfor %}</div>
 			</div>
 		</details>
-
-		<details class="analysis-accordion" id="analysis-relationships" data-analysis-accordion>
-			<summary><span class="analysis-accordion-index">۳</span><span><strong>روابط شناسایی‌شده</strong><small>{{ relationships|length }} رابطه · شرح و شواهد با بازکردن هر رابطه</small></span><span class="count-tag">{{ relationships|length }} رابطه</span></summary>
-			<div class="analysis-accordion-content">
+	</div>
+	</section>
+	<section class="analysis-tab-panel" role="tabpanel" id="tab-relationships" aria-labelledby="tab-button-relationships" data-tab-panel="relationships" {% if active_tab != 'relationships' %}hidden{% endif %}>
+	<div class="analysis-tab-content" id="analysis-relationships">
 				<div class="dashboard-section-heading"><div><p class="eyebrow">پیوندهای تحلیلی</p><h2>بررسی رابطه میان مقوله‌ها</h2></div></div>
 				{% if relationships %}<div class="relationship-dashboard-grid">{% for row in relationships %}
 				<article class="relationship-card" id="relationship-{{ row.item.relationship_id }}">
@@ -154,19 +205,28 @@
 							{% if row.item.reasoning %}<p><strong>استدلال هوش مصنوعی:</strong> {{ row.item.reasoning }}</p>{% endif %}
 							<div class="supporting-ids"><strong>مفاهیم پشتیبان</strong>{% for concept_id in row.item.supporting_concept_ids %}{% if row.concept_anchors.get(concept_id) %}<a class="supporting-chip" href="#{{ row.concept_anchors[concept_id] }}" data-open-target="{{ row.concept_anchors[concept_id] }}">{{ concept_id }}</a>{% else %}<span class="supporting-chip">{{ concept_id }}</span>{% endif %}{% else %}<small>ندارد</small>{% endfor %}</div>
 							{% if row.item.evidence %}{% for evidence in row.item.evidence %}<blockquote>{{ evidence.paragraph_id }} «{{ evidence.exact_quote }}»<small>{{ evidence.interpretation }}</small></blockquote>{% endfor %}{% else %}<p class="relation-no-evidence">برای این رابطه شاهد مستقیمی ثبت نشده است؛ رابطه فرضی یا فاقد پشتوانه را یافته قطعی در نظر نگیرید.</p>{% endif %}
-							<div class="relationship-edit"><input type="hidden" name="relationship_ids" value="{{ row.item.relationship_id }}"><label>شرح قابل ویرایش<textarea name="relationship_descriptions" rows="2">{{ row.edit.get('description', row.item.description) }}</textarea></label><label>نوع رابطه<select name="relationship_types"><option value="direct" {% if row.edit.get('relationship_type', row.item.relationship_type) == 'direct' %}selected{% endif %}>مستقیم · شواهد روشن</option><option value="interpretive" {% if row.edit.get('relationship_type', row.item.relationship_type) == 'interpretive' %}selected{% endif %}>تفسیری · استنباط قابل ردیابی</option><option value="hypothetical" {% if row.edit.get('relationship_type', row.item.relationship_type) == 'hypothetical' %}selected{% endif %}>فرضی · شواهد ناکافی</option></select></label><label>تصمیم پژوهشگر<select name="relationship_decisions"><option value="" {% if not row.edit.get('decision') %}selected{% endif %}>نیازمند بررسی</option><option value="approved" {% if row.edit.get('decision') == 'approved' %}selected{% endif %}>تأیید رابطه</option><option value="rejected" {% if row.edit.get('decision') == 'rejected' %}selected{% endif %}>رد رابطه</option></select></label><label>دلیل تصمیم / یادداشت<textarea name="relationship_decision_reasons" rows="2">{{ row.edit.get('decision_reason', '') }}</textarea></label></div>
+						<div class="relationship-edit"><input type="hidden" name="relationship_ids" value="{{ row.item.relationship_id }}"><details class="edit-disclosure"><summary>ویرایش شرح و نوع رابطه</summary><label>شرح قابل ویرایش<textarea name="relationship_descriptions" rows="2">{{ row.edit.get('description', row.item.description) }}</textarea></label><label>نوع رابطه<select name="relationship_types"><option value="direct" {% if row.edit.get('relationship_type', row.item.relationship_type) == 'direct' %}selected{% endif %}>مستقیم · شواهد روشن</option><option value="interpretive" {% if row.edit.get('relationship_type', row.item.relationship_type) == 'interpretive' %}selected{% endif %}>تفسیری · استنباط قابل ردیابی</option><option value="hypothetical" {% if row.edit.get('relationship_type', row.item.relationship_type) == 'hypothetical' %}selected{% endif %}>فرضی · شواهد ناکافی</option></select></label></details></div>
 						</div>
 					</details>
 				</article>{% endfor %}</div>{% else %}<p class="empty-analysis">رابطه‌ای در خروجی تحلیل ثبت نشده است.</p>{% endif %}
 			</div>
-		</details>
+	</section>
 
-		<details class="analysis-accordion" id="analysis-review" data-analysis-accordion {% if request.query_params.get('show_quality') %}open{% endif %}>
-			<summary><span class="analysis-accordion-index">۴</span><span><strong>موارد نیازمند بررسی پژوهشگر</strong><small>{{ review_issues|length }} مورد باز · فیلتر بر اساس نوع و اهمیت</small></span><span class="count-tag {% if review_issues %}review-count-tag{% endif %}">{{ review_issues|length }} مورد</span></summary>
-			<div class="analysis-accordion-content">
-				<div class="review-filter-bar"><label>نوع مورد<select data-review-filter-kind><option value="all">همه انواع</option><option value="category">مقوله / پدیده</option><option value="placement">جایگاه پارادایمی</option><option value="concept">مفهوم</option><option value="relationship">رابطه</option><option value="evidence">شاهد</option><option value="quality">کنترل کیفیت</option></select></label><label>اهمیت<select data-review-filter-severity><option value="all">همه سطوح</option><option value="high">مهم</option><option value="medium">بررسی</option></select></label><span data-review-filter-count>{{ review_issues|length }} مورد</span></div>
-				{% if review_issues %}<div class="analysis-review-list" data-review-list>{% for item in review_issues %}<article class="analysis-review-item" data-kind="{{ item.kind }}" data-severity="{{ item.severity }}"><div><span class="review-severity is-{{ item.severity }}">{{ 'مهم' if item.severity == 'high' else 'بررسی' }}</span><strong>{{ item.label }}</strong><p>{{ item.detail }}</p>{% if item.status == 'in_progress' %}<small>در حال بررسی</small>{% elif item.status == 'deferred' %}<small>به تعویق افتاده · همچنان حل‌نشده</small>{% endif %}{% if item.note %}<small>یادداشت: {{ item.note }}</small>{% endif %}</div><a class="button button-secondary" href="#{{ item.anchor }}" data-open-target="{{ item.anchor }}">رفتن به بررسی</a><label>چرخه عمر<select name="status" form="review-life-{{ loop.index }}"><option value="open" {% if item.status == 'open' %}selected{% endif %}>باز و نیازمند بررسی</option><option value="in_progress" {% if item.status == 'in_progress' %}selected{% endif %}>در حال بررسی</option><option value="deferred" {% if item.status == 'deferred' %}selected{% endif %}>به تعویق افتاده</option>{% if item.allow_terminal %}<option value="approved">تأیید پژوهشگر</option><option value="corrected">اصلاح‌شده</option><option value="rejected">رد پیشنهاد</option>{% endif %}</select></label><label>یادداشت<textarea name="note" form="review-life-{{ loop.index }}" rows="2" placeholder="یادداشت یا دلیل تصمیم">{{ item.note }}</textarea></label><button class="button button-secondary" type="submit" form="review-life-{{ loop.index }}">ثبت وضعیت</button></article>{% endfor %}</div>{% else %}<p class="empty-analysis">مورد بازبینی ثبت‌نشده‌ای وجود ندارد.</p>{% endif %}
-				{% if decision_evidence_groups %}<h3>تصمیم‌های تجمیع‌شده درباره شواهد</h3><div class="researcher-review-list">{% for group in decision_evidence_groups %}<article id="{{ group.anchor }}"><span>{{ group.references|length }} ارجاع · {{ group.paragraph_id }}</span><strong>{{ group.status }}{% if group.similarity is not none %} · شباهت {{ group.similarity }}٪{% endif %}</strong><div class="evidence-resolution-pair"><div><small>نقل‌قول ثبت‌شده</small><blockquote>{{ group.exact_quote or 'نقل‌قولی ثبت نشده است.' }}</blockquote></div><div><small>متن اصلی پاراگراف</small><blockquote>{{ group.source_text or 'پاراگراف مرجع پیدا نشد.' }}</blockquote></div></div><ul>{% for reference in group.references %}<li>{{ reference.stage }} · {{ reference.record_type }} {{ reference.record_id }}</li>{% endfor %}</ul>{% if group.can_auto_accept %}<label>یادداشت تأیید<textarea name="decision_note" form="evidence-auto-{{ group.issue_id }}" rows="2" required></textarea></label><button class="button button-primary" type="submit" form="evidence-auto-{{ group.issue_id }}">تأیید تطبیق برای همه ارجاع‌ها</button>{% endif %}<details><summary class="button button-secondary">اصلاح یا رد گروه</summary><div class="form-stack"><label>نقل‌قول دقیق و پیوسته از متن اصلی<textarea name="replacement_quote" form="evidence-manual-{{ group.issue_id }}" rows="3" required>{{ group.exact_quote }}</textarea></label><label>یادداشت اصلاح<textarea name="decision_note" form="evidence-manual-{{ group.issue_id }}" rows="2" required></textarea></label><label>یادداشت پژوهشگر برای رد<textarea name="decision_note" form="evidence-reject-{{ group.issue_id }}" rows="2" required></textarea></label><button class="button button-secondary" type="submit" form="evidence-manual-{{ group.issue_id }}">اصلاح همه ارجاع‌ها</button><button class="button button-secondary" type="submit" form="evidence-reject-{{ group.issue_id }}">رد پیشنهاد</button></div></details><a href="/analysis/{{ project.project_id }}#stage-import-{{ group.references[0].stage }}">بازورود خروجی مرحله</a></article>{% endfor %}</div>{% endif %}
+	<section class="analysis-tab-panel" role="tabpanel" id="analysis-review" aria-labelledby="tab-button-review" data-tab-panel="review" {% if active_tab != 'review' %}hidden{% endif %}>
+	<div class="analysis-tab-content">
+		<div class="review-intro">
+			<p>هوش مصنوعی تحلیل کیفی را انجام داده است، اما برای حفظ اعتبار علمی و نهایی‌سازی پژوهش (بر اساس رویکرد اشتراوس و کوربین)، نیاز است موارد زیر توسط شما بررسی و تأیید شوند.</p>
+			<p>برای افزایش دقت، بررسی این موارد توسط پژوهشگر باعث بهبود خروجی می‌شود.</p>
+		</div>
+		{% if suggested_issues %}
+		<section class="review-group"><div class="review-group-head"><div><h2>هشدارهای پیشنهادی (تأیید سریع) <span class="count-tag">{{ suggested_issues|length }}</span></h2><p class="muted">پیشنهادها و هشدارهای ملایم هوش مصنوعی؛ در صورت موافقت می‌توانید همه را با یک کلیک تأیید کنید.</p></div><button class="button button-approve" type="submit" form="review-approve-suggested" data-confirm="همه {{ suggested_issues|length }} مورد پیشنهادی تأیید شوند؟">تأیید همه موارد پیشنهادی</button></div>
+		<div class="review-card-list">{% for item in suggested_issues %}{{ suggested_card(item) }}{% endfor %}</div></section>
+		{% endif %}
+		{% if manual_issues %}
+		<section class="review-group"><h2>موارد نیازمند تعیین تکلیف و ورود دستی <span class="count-tag review-count-tag">{{ manual_issues|length }}</span></h2><p class="muted">سیستم برای این موارد داده‌ی کافی ندارد و نمی‌تواند خودش تصمیم بگیرد.</p>
+		<div class="review-card-list">{% for item in manual_issues %}{{ manual_card(item) }}{% endfor %}</div></section>
+		{% endif %}
+		{% if not review_issues %}<p class="empty-analysis">موردی برای تصمیم‌گیری باقی نمانده است.</p>{% endif %}
 				<details class="quality-details" id="quality-audit"><summary><span>جزئیات کنترل کیفیت</span><span class="status-pill">{{ analysis.quality_audit.final_status }}</span></summary>
 					<dl class="quality-flags"><dt>همه مفاهیم بررسی شده</dt><dd>{{ 'بله' if analysis.quality_audit.all_concepts_reviewed else 'خیر' }}</dd><dt>شناسه‌ها حفظ شده‌اند</dt><dd>{{ 'بله' if analysis.quality_audit.all_ids_preserved else 'خیر' }}</dd><dt>شواهد قابل راستی‌آزمایی</dt><dd>{{ 'بله' if analysis.quality_audit.all_evidence_verifiable else 'خیر' }}</dd><dt>رابطه پشتیبانی‌نشده</dt><dd>{{ 'بله' if analysis.quality_audit.unsupported_relationships_detected else 'خیر' }}</dd><dt>تناقض شناسایی‌شده</dt><dd>{{ 'بله' if analysis.quality_audit.contradictions_detected else 'خیر' }}</dd><dt>داده ناقص</dt><dd>{{ 'بله' if analysis.quality_audit.missing_data_detected else 'خیر' }}</dd></dl>
 					{% if analysis.quality_audit.analysis_limitations %}<h3>محدودیت‌ها</h3><ul>{% for item in analysis.quality_audit.analysis_limitations %}<li>{{ item }}</li>{% endfor %}</ul>{% endif %}
@@ -179,22 +239,28 @@
 					{% if resolution_history %}<h3>تاریخچه اصلاح و رد شواهد / رکوردها</h3><div class="analysis-change-history">{% for item in resolution_history|reverse %}<article><span>{{ item.issue_id }}</span><strong>{{ item.status }}</strong><small>{{ item.changed_at }}{% if item.note %} · یادداشت: {{ item.note }}{% endif %}</small></article>{% endfor %}</div>{% endif %}
 				</details>
 			</div>
-		</details>
-	</div>
+	</section>
 
-	<footer class="analysis-savebar analysis-savebar-fixed">
-		<label class="researcher-note">یادداشت پژوهشگر<textarea name="researcher_note" rows="1">{{ edit.get('researcher_note', '') }}</textarea></label>
-		<div class="analysis-finalization"><label id="researcher-confirmation" class="check-label"><input type="checkbox" name="confirmed" value="true" {% if edit.get('confirmed') %}checked{% endif %} {% if not can_finalize %}disabled{% endif %}> تأیید نهایی تحلیل</label>{% if not can_finalize %}<small>تأیید نهایی پس از تعیین تکلیف پدیده، مقوله‌ها، روابط و موارد مهم کنترل کیفیت فعال می‌شود.</small>{% endif %}</div>
-		<div class="form-actions"><button class="button button-primary" type="submit">ذخیره تغییرات</button><a class="button button-secondary" href="/results/{{ project.project_id }}/concept-review">بازگشت به مرحله قبل</a><a class="button button-secondary" href="#analysis-review">موارد باقی‌مانده</a></div>
+	<section class="analysis-tab-panel" role="tabpanel" id="tab-coding" aria-labelledby="tab-button-coding" data-tab-panel="coding" {% if active_tab != 'coding' %}hidden{% endif %}>
+	{% set export_base = '/exports/' ~ project.project_id ~ '/coding-table' %}
+	{% include "_coding_table.html" %}
+	</section>
+
+	<footer class="analysis-savebar analysis-savebar-fixed analysis-savebar-simple">
+		<details class="researcher-note-disclosure"><summary>یادداشت پژوهشگر یا ذخیره پیش‌نویس</summary><label>یادداشت پژوهشگر<textarea name="researcher_note" rows="2">{{ edit.get('researcher_note', '') }}</textarea></label><button class="button button-secondary" type="submit" name="confirmed" value="false" formnovalidate>ذخیره پیش‌نویس بدون تأیید نهایی</button></details>
+		<div class="analysis-finalization">
+			{% if not can_finalize %}<small>{% if open_count %}برای تأیید نهایی، {{ open_count }} مورد باقی‌مانده را در تب «موارد نیازمند بررسی پژوهشگر» تعیین تکلیف کنید.{% else %}تأیید نهایی پس از ثبت تصمیم همه‌ی مقوله‌ها، روابط، پدیده محوری و مفاهیم فعال می‌شود.{% endif %}</small>{% endif %}
+			<button class="button button-primary button-finalize" type="submit" name="confirmed" value="true" {% if not can_finalize %}disabled{% endif %}>تأیید نهایی و ذخیره تحلیل این مصاحبه</button>
+		</div>
 	</footer>
 </form>
-{% for item in review_issues %}
-	<form id="review-life-{{ loop.index }}" action="/results/{{ project.project_id }}/review-issue" method="post"><input type="hidden" name="issue_id" value="{{ item.issue_id }}"></form>
+{% for item in review_issues if item.form_type != 'evidence' %}
+	<form id="review-resolve-{{ item.position }}" action="/results/{{ project.project_id }}/review-issue/resolve" method="post"><input type="hidden" name="issue_id" value="{{ item.issue_id }}"></form>
 {% endfor %}
+<form id="review-approve-suggested" action="/results/{{ project.project_id }}/review-issues/approve-suggested" method="post"></form>
 {% for group in decision_evidence_groups %}
-	{% if group.can_auto_accept %}<form id="evidence-auto-{{ group.issue_id }}" action="/results/{{ project.project_id }}/evidence-resolution" method="post"><input type="hidden" name="issue_id" value="{{ group.issue_id }}"><input type="hidden" name="action" value="approve_auto"></form>{% endif %}
-	<form id="evidence-manual-{{ group.issue_id }}" action="/results/{{ project.project_id }}/evidence-resolution" method="post"><input type="hidden" name="issue_id" value="{{ group.issue_id }}"><input type="hidden" name="action" value="save_manual"></form>
-	<form id="evidence-reject-{{ group.issue_id }}" action="/results/{{ project.project_id }}/evidence-resolution" method="post"><input type="hidden" name="issue_id" value="{{ group.issue_id }}"><input type="hidden" name="action" value="reject"></form>
+	{% if group.can_auto_accept %}<form id="evidence-auto-{{ group.issue_id }}" action="/results/{{ project.project_id }}/evidence-resolution" method="post"><input type="hidden" name="issue_id" value="{{ group.issue_id }}"><input type="hidden" name="action" value="approve_auto"><input type="hidden" name="decision_note" value="تأیید تطبیق شاهد توسط پژوهشگر"></form>{% endif %}
+	<form id="evidence-manual-{{ group.issue_id }}" action="/results/{{ project.project_id }}/evidence-resolution" method="post"><input type="hidden" name="issue_id" value="{{ group.issue_id }}"><input type="hidden" name="decision_note" value="ثبت توسط پژوهشگر"></form>
 {% endfor %}
 {% for item in record_errors %}{% if item.resolution_id %}<form id="record-resolution-{{ loop.index }}" action="/results/{{ project.project_id }}/record-resolution" method="post"><input type="hidden" name="resolution_id" value="{{ item.resolution_id }}"></form>{% endif %}{% endfor %}
 {% endblock %}

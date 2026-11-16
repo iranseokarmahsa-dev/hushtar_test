@@ -11,6 +11,7 @@ from typing import Any
 from urllib.parse import urlencode
 
 from app.core.database import list_projects
+from app.services.coding_table_service import EXPORT_FORMATS, build_synthesis_coding_table
 from app.repositories.synthesis_repository import list_stage_results, list_synthesis_runs
 from app.services.synthesis_service import create_synthesis_run_from_selection, summarize_project_eligibility
 from app.services.synthesis.collector_service import collect_run_pools
@@ -664,12 +665,29 @@ def final_model_page(request: Request, run_id: str):
     context = final_model_page_data(run_id)
     latest = context.get("latest")
     diagram = None
+    coding_table = None
     if latest and context.get("latest_is_current") and latest.get("approval_status") == "approved":
         diagram = prepare_final_model_diagram(latest["output_json"])
+        coding_table = build_synthesis_coding_table(run_id, latest["output_json"])
     return templates.TemplateResponse(
         request=request,
         name="final_model.html",
-        context={"request": request, **context, "diagram": diagram},
+        context={"request": request, **context, "diagram": diagram, "coding_table": coding_table},
+    )
+
+
+@router.get("/runs/{run_id}/final-model/coding-table.{fmt}")
+def export_final_model_coding_table(run_id: str, fmt: str):
+    latest = latest_final_model(run_id)
+    if fmt not in EXPORT_FORMATS:
+        raise HTTPException(status_code=422, detail="فرمت خروجی باید CSV، XLSX یا DOCX باشد.")
+    if latest is None or latest.get("stale") or latest.get("approval_status") != "approved":
+        raise HTTPException(status_code=409, detail="مدل نهایی معتبر و به‌روز برای دریافت جدول وجود ندارد.")
+    build, media_type = EXPORT_FORMATS[fmt]
+    return Response(
+        build(build_synthesis_coding_table(run_id, latest["output_json"])),
+        media_type=media_type,
+        headers={"Content-Disposition": f'attachment; filename="coding-table-{run_id[:8]}.{fmt}"'},
     )
 
 

@@ -1,0 +1,30 @@
+<section class="coding-table-section" id="coding-table">
+	<div class="coding-table-head">
+		<div><p class="eyebrow">قابل استناد در فصل چهارم پایان‌نامه</p><h2>{{ coding_table.title }}</h2><p class="muted">سیر تبدیل مفاهیم اولیه به مقولات و ابعاد پارادایمی؛ داده‌ها از تصمیم‌های تأییدشده‌ی فعلی ساخته می‌شوند و هوش مصنوعی دوباره اجرا نمی‌شود.</p></div>
+		<div class="coding-table-actions">
+			<a class="button button-primary" href="{{ export_base }}.xlsx">دانلود فایل اکسل</a>
+			<a class="button button-secondary" href="{{ export_base }}.csv">دانلود CSV</a>
+			<a class="button button-secondary" href="{{ export_base }}.docx">دانلود فایل Word (.docx)</a>
+		</div>
+	</div>
+	{% if coding_table.rows %}
+	<div class="coding-table-wrap">
+		<table class="coding-table" dir="rtl">
+			<thead><tr>{% for header in coding_table.headers %}<th>{{ header }}</th>{% endfor %}</tr></thead>
+			<tbody>
+				{% for row in coding_table.rows %}
+				<tr>
+					{% if row.dimension_span %}<td class="coding-dimension" rowspan="{{ row.dimension_span }}">{{ row.dimension }}</td>{% endif %}
+					{% if row.category_span %}<td class="coding-category" rowspan="{{ row.category_span }}">{{ row.category }}</td>{% endif %}
+					<td>{{ row.concept }}</td>
+					<td class="coding-ref">{{ row.ref }}</td>
+				</tr>
+				{% endfor %}
+			</tbody>
+		</table>
+	</div>
+	{% if coding_table.interviews %}<p class="muted coding-table-legend">راهنمای مصاحبه‌ها: {% for item in coding_table.interviews %}م{{ item.number }} = {{ item.title }}{% if not loop.last %}؛ {% endif %}{% endfor %}</p>{% endif %}
+	{% else %}
+	<p class="empty-analysis">هنوز مقوله‌ای با مفاهیم پشتیبان برای نمایش در جدول وجود ندارد.</p>
+	{% endif %}
+</section>

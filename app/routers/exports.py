@@ -6,6 +6,7 @@ from fastapi import APIRouter, HTTPException
 from fastapi.responses import Response
 
 from app.core.database import get_project
+from app.services.coding_table_service import EXPORT_FORMATS, build_interview_coding_table
 from app.services.export_service import create_excel, create_markdown_report, create_word_report
 
 router = APIRouter(prefix="/exports", tags=["exports"])
@@ -37,6 +38,19 @@ def export_excel(project_id: str):
 def export_word(project_id: str):
 	project = _project_or_404(project_id)
 	return Response(create_word_report(project), media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document", headers={"Content-Disposition": f'attachment; filename="report-{project_id[:8]}.docx"'})
+
+
+@router.get("/{project_id}/coding-table.{fmt}")
+def export_coding_table(project_id: str, fmt: str):
+	project = _project_or_404(project_id)
+	if project["analysis"].get("schema_version") != "2.0" or fmt not in EXPORT_FORMATS:
+		raise HTTPException(status_code=404, detail="جدول کدگذاری برای این پروژه یا فرمت وجود ندارد.")
+	build, media_type = EXPORT_FORMATS[fmt]
+	return Response(
+		build(build_interview_coding_table(project)),
+		media_type=media_type,
+		headers={"Content-Disposition": f'attachment; filename="coding-table-{project_id[:8]}.{fmt}"'},
+	)
 
 
 @router.get("/{project_id}/analysis.md")

@@ -23,7 +23,29 @@ paradigmCards.forEach((details) => {
 	details.addEventListener("toggle", () => closeSiblings(details, paradigmCards));
 });
 
+const tabButtons = [...document.querySelectorAll("[data-tab]")];
+const tabPanels = [...document.querySelectorAll("[data-tab-panel]")];
+
+function activateTab(name) {
+	tabButtons.forEach((button) => {
+		button.setAttribute("aria-selected", String(button.dataset.tab === name));
+	});
+	tabPanels.forEach((panel) => {
+		panel.hidden = panel.dataset.tabPanel !== name;
+	});
+}
+
+tabButtons.forEach((button) => {
+	button.addEventListener("click", (event) => {
+		event.preventDefault();
+		activateTab(button.dataset.tab);
+		history.replaceState(null, "", button.getAttribute("href"));
+	});
+});
+
 function openTarget(target) {
+	const panel = target.closest("[data-tab-panel]");
+	if (panel && panel.hidden) activateTab(panel.dataset.tabPanel);
 	let current = target;
 	while (current) {
 		if (current instanceof HTMLDetailsElement) {
@@ -80,28 +102,17 @@ function highlightEvidence() {
 
 highlightEvidence();
 
-const kindFilter = document.querySelector("[data-review-filter-kind]");
-const severityFilter = document.querySelector("[data-review-filter-severity]");
-const reviewItems = [...document.querySelectorAll("[data-review-list] .analysis-review-item")];
-const filterCount = document.querySelector("[data-review-filter-count]");
+document.addEventListener("click", (event) => {
+	const button = event.target.closest("button[data-confirm]");
+	if (button && !window.confirm(button.dataset.confirm)) event.preventDefault();
+});
 
-function filterReviewItems() {
-	let visibleCount = 0;
-	reviewItems.forEach((item) => {
-		const kindMatches = kindFilter.value === "all" || item.dataset.kind === kindFilter.value;
-		const severityMatches = severityFilter.value === "all"
-			|| item.dataset.severity === severityFilter.value;
-		const visible = kindMatches && severityMatches;
-		item.hidden = !visible;
-		if (visible) visibleCount += 1;
-	});
-	if (filterCount) {
-		filterCount.textContent = `${visibleCount} از ${reviewItems.length} مورد`;
+// Enter inside a correction box must not submit the form's default (approve) button.
+document.addEventListener("keydown", (event) => {
+	if (event.key === "Enter" && event.target.matches(".review-correct-box input")) {
+		event.preventDefault();
 	}
-}
-
-kindFilter?.addEventListener("change", filterReviewItems);
-severityFilter?.addEventListener("change", filterReviewItems);
+});
 
 const initialTarget = document.getElementById(decodeURIComponent(window.location.hash.slice(1)));
 if (initialTarget) openTarget(initialTarget);

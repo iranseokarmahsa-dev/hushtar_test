@@ -1,6 +1,7 @@
 """Analysis result, category, paradigm, and relationship views."""
 
 import json
+from copy import deepcopy
 from datetime import datetime, timezone
 from urllib.parse import urlencode
 
@@ -13,6 +14,7 @@ from rapidfuzz import fuzz
 from app.core.database import get_project, update_project
 from app.repositories.synthesis_repository import mark_synthesis_runs_stale_for_source
 from app.services.analysis_service import parse_stage_markdown, prepare_analysis_results
+from app.services.coding_table_service import build_interview_coding_table
 from app.services.evidence_validation import group_evidence_warnings
 from app.services.paradigm_service import prepare_paradigm_diagram, render_paradigm_diagram
 
@@ -60,7 +62,6 @@ def _v2_project_or_409(project_id: str):
 def _can_finalize_interview_analysis(project: dict, analysis: dict, edit: dict) -> bool:
 	phenomenon = analysis.get("central_phenomenon") or {}
 	phenomenon_edit = edit.get("central_phenomenon", {})
-	quality = analysis.get("quality_audit", {})
 	diagram = prepare_paradigm_diagram(project)
 	placed_category_ids = {
 		category_id
@@ -106,16 +107,11 @@ def _can_finalize_interview_analysis(project: dict, analysis: dict, edit: dict) 
 			item.get("confirmed")
 			for item in (project.get("researcher_edits") or {}).get("concept_reviews", {}).values()
 		)
-		and not quality.get("unsupported_relationships_detected")
-		and not quality.get("contradictions_detected")
-		and not quality.get("missing_data_detected")
-		and not quality.get("validation_issues")
-		and not quality.get("evidence_warnings")
-		and not quality.get("rejected_evidence_warnings")
-		and not quality.get("record_errors")
-		and quality.get("all_concepts_reviewed", False)
-		and quality.get("all_ids_preserved", False)
-		and quality.get("all_evidence_verifiable", False)
+		and all(
+			edit.get("relationships", {}).get(item["relationship_id"], {}).get("decision") == "rejected"
+			for item in analysis.get("relationships", [])
+			if not item.get("evidence") or not item.get("supporting_concept_ids")
+		)
 	)
 
 
@@ -523,7 +519,10 @@ def resolve_evidence_warning(
 			raise HTTPException(status_code=422, detail="برای ثبت اصلاح شاهد، یادداشت پژوهشگر الزامی است.")
 		resolved_quote = replacement_quote.strip()
 		if not resolved_quote or resolved_quote not in source_text:
-			raise HTTPException(status_code=422, detail="متن اصلاح‌شده باید عیناً و پیوسته در پاراگراف اصلی وجود داشته باشد.")
+			return RedirectResponse(
+				f"/results/{project_id}/interview-analysis?tab=review&error=quote_mismatch",
+				status_code=303,
+			)
 	else:
 		raise HTTPException(status_code=422, detail="نوع اصلاح شاهد نامعتبر است.")
 	targets = []
@@ -1026,7 +1025,11 @@ def interview_analysis_page(request: Request, project_id: str):
 		for category_id in node["category_ids"]
 	}
 
-	def add_review_issue(anchor, label, detail, kind="quality", severity="medium", issue_id=None):
+	def add_review_issue(
+		anchor, label, detail, kind="quality", severity="medium", issue_id=None,
+		form_type="quality", values=None, can_approve=True, can_correct=True,
+		can_reject=False, hint="", group=None, section="suggested",
+	):
 		lifecycle = review_lifecycle.get(issue_id or anchor, {})
 		if lifecycle.get("status") in {"approved", "corrected", "rejected"}:
 			return
@@ -1040,6 +1043,14 @@ def interview_analysis_page(request: Request, project_id: str):
 			"status": lifecycle.get("status", "open"),
 			"note": lifecycle.get("note", ""),
 			"allow_terminal": kind == "quality",
+			"form_type": form_type,
+			"values": values or {},
+			"can_approve": can_approve,
+			"can_correct": can_correct,
+			"can_reject": can_reject,
+			"hint": hint,
+			"group": group,
+			"section": section,
 		})
 
 	for row in categories:
@@ -1053,14 +1064,25 @@ def interview_analysis_page(request: Request, project_id: str):
 				f"جایگاه مقوله {row['item']['category_id']}",
 				"این مقوله در هیچ‌یک از مؤلفه‌های پارادایمی قرار نگرفته است.",
 				"placement",
+				"high",
 				issue_id=f"placement-{row['item']['category_id']}",
+				form_type="placement",
+				can_approve=False,
+				hint="هوش مصنوعی جایگاهی برای این مقوله پیشنهاد نکرده است؛ جایگاه آن را انتخاب کنید.",
+				section="manual",
 			)
 		if row["edit"].get("decision") not in {"approved", "rejected"}:
 			add_review_issue(
 				f"category-{row['item']['category_id']}",
 				f"مقوله {row['item']['category_id']}",
-				row["item"].get("category_name", ""),
+				row["edit"].get("category_name", row["item"].get("category_name", "")),
 				"category",
+				form_type="category",
+				values={
+					"name": row["edit"].get("category_name", row["item"].get("category_name", "")),
+					"definition": row["edit"].get("definition", row["item"].get("definition", "")),
+				},
+				can_reject=True,
 			)
 	for row in relationships:
 		if (
@@ -1070,20 +1092,37 @@ def interview_analysis_page(request: Request, project_id: str):
 				and not row["item"].get("evidence")
 			)
 		):
+			has_evidence = bool(row["item"].get("evidence"))
 			add_review_issue(
 				f"relationship-{row['item']['relationship_id']}",
 				f"رابطه {row['item']['relationship_id']}",
-				row["item"].get("description", ""),
+				row["edit"].get("description", row["item"].get("description", "")),
 				"relationship",
-				"high" if not row["item"].get("evidence") else "medium",
+				"medium" if has_evidence else "high",
+				form_type="relationship",
+				values={
+					"description": row["edit"].get("description", row["item"].get("description", "")),
+					"type": row["edit"].get("relationship_type", row["item"].get("relationship_type", "interpretive")),
+				},
+				can_approve=has_evidence,
+				can_correct=has_evidence,
+				can_reject=True,
+				hint="" if has_evidence else "این رابطه شاهد مستقیم ندارد؛ با ثبت، رابطه رد می‌شود. در صورت تمایل دلیل را بنویسید.",
+				section="suggested" if has_evidence else "manual",
 			)
 	if phenomenon and phenomenon_edit.get("decision") not in {"approved", "rejected"}:
 		add_review_issue(
 			"central-phenomenon",
 			"پدیده محوری",
-			phenomenon.get("title", "نیازمند تعیین تکلیف"),
+			phenomenon_edit.get("title", phenomenon.get("title", "نیازمند تعیین تکلیف")),
 			"category",
-			"high" if phenomenon_edit.get("decision") != "approved" else "medium",
+			"high",
+			form_type="phenomenon",
+			values={
+				"title": phenomenon_edit.get("title", phenomenon.get("title") or ""),
+				"definition": phenomenon_edit.get("definition", phenomenon.get("definition", "")),
+			},
+			hint="بدون تعیین پدیده محوری، مدل نهایی ساخته نمی‌شود.",
 		)
 	if not phenomenon:
 		add_review_issue(
@@ -1092,6 +1131,10 @@ def interview_analysis_page(request: Request, project_id: str):
 			"پدیده محوری هنوز مشخص نشده است.",
 			"category",
 			"high",
+			form_type="phenomenon",
+			can_approve=False,
+			hint="برای ساخت مدل نهایی لازم است؛ عنوان پدیده محوری را بنویسید و مقوله‌ی مرتبط را انتخاب کنید.",
+			section="manual",
 		)
 	for index, item in enumerate(analysis.get("researcher_review", [])):
 		if item.get("issue") in {"شاهد نیازمند بازبینی", "رکورد نیازمند بازبینی ساختاری"}:
@@ -1106,6 +1149,7 @@ def interview_analysis_page(request: Request, project_id: str):
 			])),
 			"quality",
 			"high",
+			can_reject=True,
 		)
 	for review in project["analysis"].get("concept_reviews", []):
 		concept_id = review.get("concept_id", "")
@@ -1126,6 +1170,13 @@ def interview_analysis_page(request: Request, project_id: str):
 			f"مفهوم {concept_id}",
 			"بازبینی مفهوم مرحله قبل هنوز تأیید نشده است.",
 			"concept",
+			issue_id=f"concept-review-{concept_id}",
+			form_type="concept",
+			values={
+				"title": review.get("suggested_concept") or review.get("original_concept", ""),
+				"code": review.get("suggested_code") or review.get("original_code", ""),
+			},
+			can_reject=True,
 		)
 	subcategory_count = sum(len(item.get("subcategories", [])) for item in analysis["categories"])
 	reviewed_count = (
@@ -1175,6 +1226,14 @@ def interview_analysis_page(request: Request, project_id: str):
 		]
 		group["anchor"] = f"quality-evidence-{group['warning_indices'][0]}"
 		group["source_text"] = paragraphs_by_id.get(group.get("paragraph_id"), "")
+		quote, source = group.get("exact_quote") or "", group["source_text"]
+		alignment = fuzz.partial_ratio_alignment(quote, source) if quote and source else None
+		group["suggested_quote"] = (
+			quote if quote and quote in source
+			 else _source_sentence_for_span(source, alignment.dest_start, alignment.dest_end)
+			if alignment is not None and alignment.dest_end > alignment.dest_start
+			else source
+		)
 		group["can_auto_accept"] = (
 			group.get("status") == "fuzzy_match"
 			and (group.get("similarity") or 0) >= 90
@@ -1186,6 +1245,11 @@ def interview_analysis_page(request: Request, project_id: str):
 			"evidence",
 			"high",
 			issue_id=f"quality-evidence-{group['issue_id']}",
+			form_type="evidence",
+			can_approve=group["can_auto_accept"],
+			can_reject=True,
+			group=group,
+			section="suggested" if group["can_auto_accept"] else "manual",
 		)
 		for warning_index in group["warning_indices"]:
 			evidence_warnings[warning_index]["issue_id"] = group["issue_id"]
@@ -1240,6 +1304,10 @@ def interview_analysis_page(request: Request, project_id: str):
 		"status": "invalid",
 	} for item in record_errors)
 	review_issues.sort(key=lambda item: item["severity"] != "high")
+	for position, item in enumerate(review_issues, 1):
+		item["position"] = position
+	manual_issues = [item for item in review_issues if item["section"] == "manual"]
+	suggested_issues = [item for item in review_issues if item["section"] == "suggested"]
 	category_rows_by_id = {row["item"]["category_id"]: row for row in categories}
 	paradigm_components = []
 	for node in paradigm_diagram["nodes"]:
@@ -1285,6 +1353,8 @@ def interview_analysis_page(request: Request, project_id: str):
 			"phenomenon": phenomenon,
 			"phenomenon_edit": phenomenon_edit,
 			"review_issues": review_issues,
+			"manual_issues": manual_issues,
+			"suggested_issues": suggested_issues,
 			"researcher_decisions": review_issues,
 			"review_issue_history": [
 				{"issue_id": issue_id, **entry}
@@ -1308,6 +1378,7 @@ def interview_analysis_page(request: Request, project_id: str):
 			"subcategory_count": subcategory_count,
 			"can_finalize": can_finalize,
 			"paradigm_components": paradigm_components,
+			"coding_table": build_interview_coding_table(project),
 			"paradigm_labels": [
 				("causal_conditions", "شرایط علّی"),
 				("central_phenomenon", "پدیده محوری"),
@@ -1386,6 +1457,326 @@ def update_review_issue_lifecycle(
 		f"/results/{project_id}/interview-analysis?show_quality=1#analysis-review",
 		status_code=303,
 	)
+
+
+APPROVE_REASON = "تأیید تحلیل هوش مصنوعی توسط پژوهشگر"
+CORRECT_REASON = "اصلاح دستی توسط پژوهشگر"
+REJECT_REASON = "ثبت نظر مخالف پژوهشگر"
+PLACEMENT_KEYS = {
+	"unassigned", "causal_conditions", "contextual_conditions", "intervening_conditions",
+	"action_interaction_strategies", "consequences",
+}
+RELATIONSHIP_TYPES = {"direct", "interpretive", "hypothetical"}
+
+
+def _analysis_form_state(analysis: dict, edit: dict) -> dict:
+	"""Current researcher view of the analysis, shaped like the save form fields."""
+	category_edits = edit.get("categories", {})
+	placement_edits = edit.get("paradigm_placements", {})
+	relationship_edits = edit.get("relationships", {})
+	phenomenon = analysis.get("central_phenomenon") or {}
+	phenomenon_edit = edit.get("central_phenomenon", {})
+	categories = analysis["categories"]
+	relationships = analysis["relationships"]
+	return {
+		"category_ids": [item["category_id"] for item in categories],
+		"category_names": [
+			category_edits.get(item["category_id"], {}).get("category_name", item["category_name"])
+			for item in categories
+		],
+		"category_definitions": [
+			category_edits.get(item["category_id"], {}).get("definition", item["definition"])
+			for item in categories
+		],
+		"category_decisions": [
+			category_edits.get(item["category_id"], {}).get("decision", "") for item in categories
+		],
+		"category_decision_reasons": [
+			category_edits.get(item["category_id"], {}).get("decision_reason", "")
+			for item in categories
+		],
+		"paradigm_placements": [
+			placement_edits.get(item["category_id"], {}).get("component_key", "")
+			for item in categories
+		],
+		"placement_reasons": [
+			placement_edits.get(item["category_id"], {}).get("reason", "") for item in categories
+		],
+		"relationship_ids": [item["relationship_id"] for item in relationships],
+		"relationship_descriptions": [
+			relationship_edits.get(item["relationship_id"], {}).get("description", item["description"])
+			for item in relationships
+		],
+		"relationship_types": [
+			relationship_edits.get(item["relationship_id"], {}).get(
+				"relationship_type", item.get("relationship_type", "interpretive")
+			)
+			for item in relationships
+		],
+		"relationship_decisions": [
+			relationship_edits.get(item["relationship_id"], {}).get("decision", "")
+			for item in relationships
+		],
+		"relationship_decision_reasons": [
+			relationship_edits.get(item["relationship_id"], {}).get("decision_reason", "")
+			for item in relationships
+		],
+		"central_phenomenon_title": phenomenon_edit.get("title", phenomenon.get("title") or ""),
+		"central_phenomenon_definition": phenomenon_edit.get("definition", phenomenon.get("definition", "")),
+		"phenomenon_decision": phenomenon_edit.get("decision", ""),
+		"phenomenon_decision_reason": phenomenon_edit.get("decision_reason", ""),
+		"researcher_note": edit.get("researcher_note", ""),
+	}
+
+
+def _decide_concept_review(
+	old: dict, review: dict, decision: str, note: str, now: str, title: str = "", code: str = "",
+) -> dict:
+	if decision == "approve_suggestion":
+		title = review.get("suggested_concept") or review.get("original_concept", "")
+		code = review.get("suggested_code") or review.get("original_code", "")
+	elif decision == "keep_original":
+		title, code = review.get("original_concept", ""), review.get("original_code", "")
+	title, code = title.strip(), code.strip()
+	if not title or not code:
+		raise HTTPException(status_code=422, detail="عنوان و کد نهایی مفهوم نباید خالی باشند.")
+	status = {"approve_suggestion": "approved", "keep_original": "rejected"}.get(decision, "edited")
+	return {
+		**old,
+		"suggested_concept": title,
+		"suggested_code": code,
+		"final_concept": title,
+		"final_code": code,
+		"researcher_note": note,
+		"confirmed": True,
+		"decision": decision,
+		"lifecycle_status": status,
+		"status_history": [
+			*(old.get("status_history") or []),
+			{"status": status, "note": note, "changed_at": now},
+		],
+		"decided_at": now,
+	}
+
+
+def _researcher_review_index(analysis: dict, issue_id: str) -> int | None:
+	if not issue_id.startswith("researcher-review-"):
+		return None
+	try:
+		index = int(issue_id.rsplit("-", 1)[1])
+	except ValueError:
+		return None
+	reviews = analysis.get("researcher_review", [])
+	if not 0 <= index < len(reviews) or reviews[index].get("issue") in {
+		"شاهد نیازمند بازبینی", "رکورد نیازمند بازبینی ساختاری",
+	}:
+		return None
+	return index
+
+
+@router.post("/{project_id}/review-issue/resolve")
+def resolve_review_issue(
+	project_id: str,
+	issue_id: str = Form(...),
+	action: str = Form(...),
+	note: str = Form(""),
+	category_name: str = Form(""),
+	category_definition: str = Form(""),
+	placement: str = Form(""),
+	relationship_description: str = Form(""),
+	relationship_type: str = Form(""),
+	phenomenon_title: str = Form(""),
+	phenomenon_definition: str = Form(""),
+	phenomenon_category: str = Form(""),
+	concept_title: str = Form(""),
+	concept_code: str = Form(""),
+):
+	project = _v2_project_or_409(project_id)
+	if isinstance(project, RedirectResponse):
+		return project
+	if action not in {"approve", "correct", "reject"}:
+		raise HTTPException(status_code=422, detail="نوع تصمیم معتبر نیست.")
+	analysis = project["analysis"]["interview_analysis"]
+	stored_edits = project.get("researcher_edits") or {}
+	state = _analysis_form_state(analysis, stored_edits.get("interview_analysis", {}))
+	reason = note.strip() or {
+		"approve": APPROVE_REASON, "correct": CORRECT_REASON, "reject": REJECT_REASON,
+	}[action]
+	not_found = HTTPException(status_code=404, detail="مورد بررسی پیدا نشد یا قبلاً حل شده است.")
+	redirect = RedirectResponse(f"/results/{project_id}/interview-analysis?tab=review", status_code=303)
+
+	review_index = _researcher_review_index(analysis, issue_id)
+	if review_index is not None:
+		lifecycle = dict(stored_edits.get("review_issue_lifecycle") or {})
+		entry = {
+			"status": {"approve": "approved", "correct": "corrected", "reject": "rejected"}[action],
+			"note": reason,
+			"changed_at": datetime.now(timezone.utc).isoformat(),
+		}
+		history = [*(lifecycle.get(issue_id, {}).get("history") or []), entry]
+		lifecycle[issue_id] = {**entry, "history": history}
+		update_project(project_id, researcher_edits={**stored_edits, "review_issue_lifecycle": lifecycle})
+		mark_synthesis_runs_stale_for_source(project_id)
+		return redirect
+
+	if issue_id.startswith("concept-review-"):
+		concept_id = issue_id.removeprefix("concept-review-")
+		review = next(
+			(item for item in project["analysis"].get("concept_reviews", []) if item.get("concept_id") == concept_id),
+			None,
+		)
+		if review is None:
+			raise not_found
+		concept_edits = dict(stored_edits.get("concept_reviews") or {})
+		decision = {"approve": "approve_suggestion", "correct": "researcher_edit", "reject": "keep_original"}[action]
+		concept_edits[concept_id] = _decide_concept_review(
+			concept_edits.get(concept_id, {}), review, decision, reason,
+			datetime.now(timezone.utc).isoformat(), concept_title, concept_code,
+		)
+		update_project(project_id, researcher_edits={**stored_edits, "concept_reviews": concept_edits})
+		mark_synthesis_runs_stale_for_source(project_id)
+		return redirect
+
+	if issue_id.startswith(("category-", "placement-")):
+		is_placement = issue_id.startswith("placement-")
+		category_id = issue_id.split("-", 1)[1]
+		if category_id not in state["category_ids"]:
+			raise not_found
+		index = state["category_ids"].index(category_id)
+		if is_placement:
+			if action == "reject":
+				raise HTTPException(status_code=422, detail="جایگاه پارادایمی را فقط می‌توان تأیید یا اصلاح کرد.")
+			value = "unassigned" if action == "approve" else placement
+			if value not in PLACEMENT_KEYS:
+				raise HTTPException(status_code=422, detail="جایگاه پارادایمی معتبر نیست.")
+			state["paradigm_placements"][index] = value
+			state["placement_reasons"][index] = reason
+		else:
+			if action == "correct":
+				name, definition = category_name.strip(), category_definition.strip()
+				if not name or not definition:
+					raise HTTPException(status_code=422, detail="عنوان و تعریف مقوله نباید خالی باشند.")
+				state["category_names"][index], state["category_definitions"][index] = name, definition
+				if placement:
+					if placement not in PLACEMENT_KEYS:
+						raise HTTPException(status_code=422, detail="جایگاه پارادایمی معتبر نیست.")
+					state["paradigm_placements"][index] = placement
+					state["placement_reasons"][index] = reason
+			state["category_decisions"][index] = "rejected" if action == "reject" else "approved"
+			state["category_decision_reasons"][index] = reason
+	elif issue_id.startswith("relationship-"):
+		relationship_id = issue_id.removeprefix("relationship-")
+		if relationship_id not in state["relationship_ids"]:
+			raise not_found
+		index = state["relationship_ids"].index(relationship_id)
+		original = analysis["relationships"][index]
+		if action != "reject" and not original.get("evidence"):
+			raise HTTPException(status_code=422, detail="رابطه بدون شاهد مستقیم را فقط می‌توان رد کرد.")
+		if action == "correct":
+			description = relationship_description.strip()
+			if not description or relationship_type not in RELATIONSHIP_TYPES:
+				raise HTTPException(status_code=422, detail="شرح و نوع رابطه باید کامل باشند.")
+			state["relationship_descriptions"][index] = description
+			state["relationship_types"][index] = relationship_type
+		state["relationship_decisions"][index] = "rejected" if action == "reject" else "approved"
+		state["relationship_decision_reasons"][index] = reason
+	elif issue_id == "central-phenomenon":
+		created = False
+		if not analysis.get("central_phenomenon"):
+			created = True
+			category = next(
+				(item for item in analysis["categories"] if item["category_id"] == phenomenon_category),
+				None,
+			)
+			title = phenomenon_title.strip()
+			if action != "correct" or not title or category is None:
+				raise HTTPException(status_code=422, detail="عنوان پدیده و مقوله‌ی مرتبط را وارد کنید.")
+			record = {
+				"identified": True,
+				"category_id": category["category_id"],
+				"title": title,
+				"definition": phenomenon_definition.strip(),
+				"selection_reason": "تعیین‌شده توسط پژوهشگر",
+				"supporting_category_ids": [category["category_id"]],
+				"supporting_concept_ids": list(category.get("concept_ids", [])),
+				"evidence": deepcopy(category.get("evidence", [])),
+				"alternative_interpretations": [],
+				"confidence": 1.0,
+				"needs_researcher_review": False,
+			}
+			updated_analysis = deepcopy(project["analysis"])
+			updated_interview = updated_analysis["interview_analysis"]
+			updated_interview["central_phenomenon"] = record
+			updated_interview.setdefault("paradigm_model", {})["central_phenomenon"] = deepcopy(record)
+			update_project(project_id, analysis=updated_analysis)
+			analysis = updated_interview
+			state = _analysis_form_state(analysis, stored_edits.get("interview_analysis", {}))
+		if action == "reject":
+			raise HTTPException(status_code=422, detail="پدیده محوری را فقط می‌توان تأیید یا اصلاح کرد.")
+		if action == "correct" and not created:
+			title, definition = phenomenon_title.strip(), phenomenon_definition.strip()
+			if not title or not definition:
+				raise HTTPException(status_code=422, detail="عنوان و تعریف پدیده نباید خالی باشند.")
+			state["central_phenomenon_title"], state["central_phenomenon_definition"] = title, definition
+		state["phenomenon_decision"] = "approved"
+		state["phenomenon_decision_reason"] = reason
+	else:
+		raise not_found
+	save_interview_analysis(project_id=project_id, confirmed=False, **state)
+	return redirect
+
+
+@router.post("/{project_id}/review-issues/approve-suggested")
+def approve_suggested_review_issues(project_id: str):
+	project = _v2_project_or_409(project_id)
+	if isinstance(project, RedirectResponse):
+		return project
+	analysis = project["analysis"]["interview_analysis"]
+	stored_edits = project.get("researcher_edits") or {}
+	state = _analysis_form_state(analysis, stored_edits.get("interview_analysis", {}))
+	terminal = {"approved", "rejected"}
+	for index, decision in enumerate(state["category_decisions"]):
+		if decision not in terminal:
+			state["category_decisions"][index] = "approved"
+			state["category_decision_reasons"][index] = APPROVE_REASON
+	for index, (decision, item) in enumerate(zip(state["relationship_decisions"], analysis["relationships"])):
+		if decision not in terminal and item.get("evidence"):
+			state["relationship_decisions"][index] = "approved"
+			state["relationship_decision_reasons"][index] = APPROVE_REASON
+	if analysis.get("central_phenomenon") and state["phenomenon_decision"] not in terminal:
+		state["phenomenon_decision"] = "approved"
+		state["phenomenon_decision_reason"] = APPROVE_REASON
+	updated_edits = dict(stored_edits)
+	concept_edits = dict(stored_edits.get("concept_reviews") or {})
+	now = datetime.now(timezone.utc).isoformat()
+	for review in project["analysis"].get("concept_reviews", []):
+		if review.get("needs_researcher_review") and not concept_edits.get(review.get("concept_id"), {}).get("confirmed"):
+			concept_edits[review["concept_id"]] = _decide_concept_review(
+				concept_edits.get(review["concept_id"], {}), review, "approve_suggestion", APPROVE_REASON, now,
+			)
+	updated_edits["concept_reviews"] = concept_edits
+	lifecycle = dict(stored_edits.get("review_issue_lifecycle") or {})
+	for index in range(len(analysis.get("researcher_review", []))):
+		issue_id = f"researcher-review-{index}"
+		if _researcher_review_index(analysis, issue_id) is None:
+			continue
+		old = lifecycle.get(issue_id, {})
+		if old.get("status") in {"approved", "corrected", "rejected"}:
+			continue
+		entry = {"status": "approved", "note": APPROVE_REASON, "changed_at": now}
+		lifecycle[issue_id] = {**entry, "history": [*(old.get("history") or []), entry]}
+	updated_edits["review_issue_lifecycle"] = lifecycle
+	update_project(project_id, researcher_edits=updated_edits)
+	save_interview_analysis(project_id=project_id, confirmed=False, **state)
+	for group in list(group_evidence_warnings(analysis.get("quality_audit", {}).get("evidence_warnings", []))):
+		if group.get("status") == "fuzzy_match" and (group.get("similarity") or 0) >= 90:
+			try:
+				resolve_evidence_warning(
+					project_id, issue_id=group["issue_id"], action="approve_auto", decision_note=APPROVE_REASON,
+				)
+			except HTTPException:
+				continue
+	return RedirectResponse(f"/results/{project_id}/interview-analysis?tab=review", status_code=303)
 
 
 @router.post("/{project_id}/interview-analysis")

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from app.services.coding_table_service import concept_final_title
 from app.services.synthesis.normalization_service import as_list, stable_hash, stable_source_item_id, string_ids
 from app.services.synthesis.reference_mapper import POOL_COMPONENT_KEYS
 
@@ -15,6 +16,43 @@ def _get_approved_edit(snapshot: dict[str, Any], category_id: str) -> dict[str, 
     category_edits = edits.get("categories") or {}
     value = category_edits.get(category_id, {})
     return value if isinstance(value, dict) else {}
+
+
+def _approved_concept_ids(snapshot: dict[str, Any]) -> set[str]:
+    edits = (snapshot.get("researcher_edits") or {}).get("concept_reviews") or {}
+    if not isinstance(edits, dict):
+        return set()
+    return {
+        str(concept_id)
+        for concept_id, edit in edits.items()
+        if isinstance(edit, dict) and edit.get("confirmed") is True
+    }
+
+
+def _approved_concepts(snapshot: dict[str, Any], concept_ids: list[str]) -> list[dict[str, str]]:
+    analysis = snapshot.get("analysis") or {}
+    concept_rows = {
+        str(item.get("concept_id")): item
+        for item in as_list(snapshot.get("concepts"))
+        if isinstance(item, dict) and item.get("concept_id")
+    }
+    reviews = {
+        str(item.get("concept_id")): item
+        for item in as_list(analysis.get("concept_reviews"))
+        if isinstance(item, dict) and item.get("concept_id")
+    }
+    edits = (snapshot.get("researcher_edits") or {}).get("concept_reviews") or {}
+    return [
+        {
+            "concept_id": concept_id,
+            "text": concept_final_title(
+                concept_rows.get(concept_id, {}),
+                reviews.get(concept_id, {}),
+                edits.get(concept_id, {}),
+            ),
+        }
+        for concept_id in concept_ids
+    ]
 
 
 def _reference_values(references: list[dict[str, Any]]) -> tuple[list[str], list[dict[str, Any]]]:
@@ -39,7 +77,12 @@ def build_category_source_item(
     category_id = str(category.get("category_id") or "")
     edit = _get_approved_edit(snapshot, category_id)
     model_concept_ids, raw_model_items = _reference_values(references)
-    concept_ids = list(dict.fromkeys(string_ids(category.get("concept_ids")) + model_concept_ids))
+    approved_concept_ids = _approved_concept_ids(snapshot)
+    concept_ids = [
+        concept_id
+        for concept_id in dict.fromkeys(string_ids(category.get("concept_ids")) + model_concept_ids)
+        if concept_id in approved_concept_ids
+    ]
     subcategories = as_list(category.get("subcategories"))
     subcategory_ids = [
         str(item.get("subcategory_id"))
@@ -66,6 +109,7 @@ def build_category_source_item(
         "original_definition": category.get("definition", ""),
         "category_reason": category.get("category_reason", ""),
         "source_concept_ids": concept_ids,
+        "source_concepts": _approved_concepts(snapshot, concept_ids),
         "source_subcategory_ids": subcategory_ids,
         "source_properties": as_list(category.get("properties")),
         "source_dimensions": as_list(category.get("dimensions")),
@@ -97,7 +141,19 @@ def build_phenomenon_source_item(
     phenomenon_edit = edits.get("central_phenomenon") if edits.get("confirmed") else None
     phenomenon_edit = phenomenon_edit if isinstance(phenomenon_edit, dict) else {}
     evidence = [item for item in source.get("evidence", []) if item["evidence_ref_id"] in evidence_ref_ids]
-    concepts = string_ids(phenomenon.get("supporting_concept_ids"))
+    approved_concept_ids = _approved_concept_ids(snapshot)
+    concepts = [
+        concept_id
+        for concept_id in dict.fromkeys(
+        string_ids(phenomenon.get("supporting_concept_ids"))
+        + [
+            concept_id
+            for category_id in category_ids
+            for concept_id in string_ids(categories_by_id.get(category_id, {}).get("concept_ids"))
+        ]
+        )
+        if concept_id in approved_concept_ids
+    ]
     return {
         "source_item_id": stable_source_item_id(source_project_id, "central_phenomenon", local_id),
         "component_key": "central_phenomenon",
@@ -111,6 +167,7 @@ def build_phenomenon_source_item(
         "original_definition": phenomenon.get("definition", ""),
         "category_reason": phenomenon.get("selection_reason", ""),
         "source_concept_ids": concepts,
+        "source_concepts": _approved_concepts(snapshot, concepts),
         "source_subcategory_ids": [],
         "source_properties": [],
         "source_dimensions": [],

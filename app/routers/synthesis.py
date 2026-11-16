@@ -22,6 +22,12 @@ from app.services.synthesis.category_grouping_service import (
     submit_grouping_output,
 )
 from app.services.synthesis.category_grouping_prompt import PromptSizeLimitError
+from app.services.synthesis.component_synthesis_service import (
+    COMPONENTS as COMPONENT_SYNTHESIS_COMPONENTS,
+    component_synthesis_final_data,
+    component_synthesis_page_data,
+    submit_component_output,
+)
 from app.services.synthesis.category_review_service import record_category_review_decision
 from app.services.synthesis.review_service import record_pool_force_proceed, record_pool_review_decision
 from app.services.synthesis.theme_review_service import record_theme_review_decision
@@ -72,113 +78,33 @@ def pool_preview_page(request: Request, run_id: str, error: str = "", notice: st
             if item["stage_key"] == "pool_extraction" and item["component_key"] == "interview_pools"
         ]
         latest = max(pool_results, key=lambda item: item["version"]) if pool_results else None
-        component_labels = [
-            ("causal_conditions", "شرایط علّی"),
-            ("central_phenomenon", "پدیده محوری"),
-            ("contextual_conditions", "شرایط زمینه‌ای"),
-            ("intervening_conditions", "شرایط مداخله‌گر"),
-            ("action_interaction_strategies", "راهبردهای کنش و تعامل"),
-            ("consequences", "پیامدها"),
-        ]
         components = [
             {"key": key, "label": label, "items": pool.get("pools", {}).get(key, [])}
-            for key, label in component_labels
+            for key, label in COMPONENT_SYNTHESIS_COMPONENTS
         ]
-        category_options = {
-            source_id: [
-                {"category_id": category_id, "category_name": category.get("category_name", category_id)}
-                for category_id, category in categories.items()
-            ]
-            for source_id, categories in pool.get("category_index", {}).items()
-        }
-        review_items = [
-            {
-                **item,
-                "source_title": pool.get("source_metadata", {}).get(item.get("source_project_id"), {}).get("title"),
-                "issue_label": {
-                    "unassigned_category": "مقوله هنوز در یکی از مؤلفه‌ها جای نگرفته است",
-                    "multiple_components": "مقوله در چند مؤلفه قرار گرفته است",
-                    "invalid_category_reference": "ارجاع به مقوله ناموجود است",
-                    "invalid_central_phenomenon_category_reference": "ارجاع پدیده محوری نیازمند بررسی است",
-                    "invalid_relationship_category_reference": "ارجاع رابطه نیازمند بررسی است",
-                    "classification_without_category_reference": "تخصیص مؤلفه شناسه مقوله ندارد",
-                }.get(item.get("issue_type"), "مورد نیازمند بازبینی پژوهشگر"),
-            }
-            for item in pool.get("review_items", [])
-            if item.get("decision_status") != "approved"
-        ]
-        validation_issues = []
-        for index, issue in enumerate(pool.get("validation_report", {}).get("errors", [])):
-            source_id = issue.get("source_project_id")
-            source = pool.get("source_metadata", {}).get(source_id, {})
-            issue_type = issue.get("issue_type")
-            messages = {
-                "category_coverage_mismatch": "برخی مقوله‌های این مصاحبه هنوز در مؤلفه‌ای جای نگرفته‌اند یا به‌عنوان مستقل/مستثنا ثبت نشده‌اند.",
-                "unresolved_category_reference": "ارجاع یک مقوله به مؤلفهٔ مدل نیازمند بازبینی است.",
-                "incomplete_classification": "یک تخصیص مؤلفه، شناسهٔ مقولهٔ قابل‌شناسایی ندارد.",
-                "invalid_evidence": "یکی از شاهدهای این مصاحبه با متن اصلی تطبیق ندارد.",
-                "source_coverage_incomplete": "همهٔ مصاحبه‌های انتخاب‌شده پردازش نشده‌اند؛ ادامهٔ اجباری ممکن نیست.",
-                "snapshot_count_mismatch": "شمار منابع پردازش‌شده با منابع انتخابی برابر نیست؛ ادامهٔ اجباری ممکن نیست.",
-                "pool_not_array": "ساختار یکی از مؤلفه‌های داده نامعتبر است؛ ادامهٔ اجباری ممکن نیست.",
-                "duplicate_source_item_id": "شناسهٔ یک مورد تکراری است و باید بررسی شود.",
-                "missing_evidence_reference": "ارجاع به شاهدی وجود دارد که در فهرست شواهد نیست.",
-            }
-            review_url = (
-                f"/results/{source_id}/interview-analysis?show_quality=1#quality-validation"
-                if source_id else f"/synthesis/runs/{run_id}/pool-preview#validation-issue-{index}"
-            )
-            category_id = issue.get("category_id")
-            if source_id and category_id:
-                review_url = f"/results/{source_id}/interview-analysis#category-{category_id}"
-            validation_issues.append({
-                "issue_id": index,
-                "message": messages.get(issue_type, "موردی در یکپارچگی داده‌ها نیازمند بررسی است."),
-                "source_title": source.get("title") or source_id or "منبع نامشخص",
-                "review_url": review_url,
-                "review_label": "بررسی مصاحبهٔ منبع" if source_id else "بازبینی جزئیات",
-            })
-        coverage = pool.get("source_coverage") or []
-        critical_issue_types = {
-            "pool_not_array", "snapshot_count_mismatch", "source_coverage_incomplete",
-            "duplicate_source_item_id", "item_interview_source_mismatch",
-            "missing_evidence_reference", "evidence_missing_source_or_id",
-            "evidence_interview_source_mismatch", "cross_source_evidence_reference",
-            "cross_source_relationship_evidence", "missing_relationship_evidence_reference",
-        }
-        force_allowed = bool(
-            coverage
-            and len(coverage) == pool.get("metadata", {}).get("registered_source_count")
+        coverage = pool.get("source_coverage", [])
+        metadata = pool.get("metadata", {})
+        can_continue = (
+            metadata.get("run_id") == run_id
+            and metadata.get("source_count") == len(coverage)
             and all(item.get("processed") for item in coverage)
-            and not any(
-                issue.get("issue_type") in critical_issue_types
-                for issue in pool.get("validation_report", {}).get("errors", [])
+            and all(isinstance(pool.get("pools", {}).get(key), list) for key, _ in COMPONENT_SYNTHESIS_COMPONENTS)
+        )
+        validation = pool.get("validation_report", {})
+        validation_errors = validation.get("errors", []) if isinstance(validation, dict) else []
+        if not can_continue:
+            error = error or "داده‌های ورودی اجرا یا پوشش Snapshotها کامل نیست."
+        elif validation_errors:
+            notice = notice or (
+                f"{len(validation_errors)} مورد نیازمند بررسی خودکار شناسایی شد؛ "
+                "با این حال می‌توانید پرامپت هر مؤلفه را جداگانه تکمیل کنید."
             )
-        )
-        force_confirmed = bool(
-            (pool.get("metadata", {}).get("researcher_force_proceed") or {}).get("confirmed")
-        )
-        pending_count = len(validation_issues) + len(review_items)
-        can_continue = bool(
-            latest
-            and latest.get("approval_status") == "approved"
-            and (
-                latest.get("status") in {"ready", "approved"}
-                and pool.get("validation_report", {}).get("valid")
-                or latest.get("status") == "approved_with_warnings" and force_confirmed
-            )
-        )
     except ValueError as pool_error:
         pool = None
         latest = None
         components = []
-        category_options = {}
-        review_items = []
-        validation_issues = []
         can_continue = False
-        force_allowed = False
-        force_confirmed = False
-        pending_count = 0
-        error = error or "آماده‌سازی مؤلفه‌های انتخابی کامل نشد. منابع و تأییدهای پژوهشگر را بررسی کنید و دوباره تلاش کنید."
+        error = error or str(pool_error)
     return templates.TemplateResponse(
         request=request,
         name="pool_preview.html",
@@ -188,15 +114,14 @@ def pool_preview_page(request: Request, run_id: str, error: str = "", notice: st
             "pool": pool,
             "latest": latest,
             "components": components,
-            "category_options": category_options,
-            "review_items": review_items,
-            "validation_issues": validation_issues,
             "can_continue": can_continue,
-            "force_allowed": force_allowed,
-            "force_confirmed": force_confirmed,
-            "pending_count": pending_count,
             "page_error": error,
             "page_notice": notice,
+            "evidence_by_id": {
+                item["evidence_ref_id"]: item
+                for item in (pool or {}).get("evidence", [])
+                if item.get("evidence_ref_id")
+            },
         },
     )
 
@@ -268,44 +193,27 @@ class RelationshipReviewDecision(BaseModel):
 
 @router.get("/select")
 def synthesis_select_page(request: Request):
-    projects = list_projects()
-    eligibility = {
-        project["project_id"]: summarize_project_eligibility(project, allow_incomplete=True)
-        for project in projects
-    }
-    return templates.TemplateResponse(
-        request=request,
-        name="projects.html",
-        context={
-            "projects": projects,
-            "eligibility": eligibility,
-            "selection_mode": True,
-            "selection_error": None,
-            "selection_form": {"title": "", "study_topic": "", "selected_ids": [], "confirm_shared_topic": False},
-        },
-    )
+    return RedirectResponse("/projects", status_code=303)
 
 
 @router.post("/runs")
 def create_synthesis_run_route(
     request: Request,
-    title: str = Form(...),
+    title: str = Form(""),
     study_topic: str = Form(""),
     selected_ids: list[str] = Form([]),
-    confirm_shared_topic: bool = Form(False),
 ):
     try:
         payload = create_synthesis_run_from_selection(
             title=title,
             study_topic=study_topic,
             selected_ids=selected_ids,
-            confirm_shared_topic=confirm_shared_topic,
         )
     except ValueError as error:
         if "text/html" in request.headers.get("accept", ""):
             projects = list_projects()
             eligibility = {
-                project["project_id"]: summarize_project_eligibility(project)
+                project["project_id"]: summarize_project_eligibility(project, require_pool_ready=True)
                 for project in projects
             }
             return templates.TemplateResponse(
@@ -317,10 +225,7 @@ def create_synthesis_run_route(
                     "selection_mode": True,
                     "selection_error": str(error),
                     "selection_form": {
-                        "title": title,
-                        "study_topic": study_topic,
                         "selected_ids": selected_ids,
-                        "confirm_shared_topic": confirm_shared_topic,
                     },
                 },
                 status_code=400,
@@ -328,12 +233,7 @@ def create_synthesis_run_route(
         raise HTTPException(status_code=400, detail=str(error)) from error
 
     if "text/html" in request.headers.get("accept", ""):
-        warning = ""
-        if payload.get("eligibility_warnings"):
-            warning = f"{len(payload['eligibility_warnings'])} مصاحبه با وضعیت نیازمند بازبینی وارد اجرا شدند؛ موارد در میز کار بررسی می‌شوند."
-        query = urlencode({"notice": warning}) if warning else ""
-        suffix = f"?{query}" if query else ""
-        return RedirectResponse(f"/synthesis/runs/{payload['run_id']}/pool-preview{suffix}", status_code=303)
+        return RedirectResponse(f"/synthesis/runs/{payload['run_id']}/pool-preview", status_code=303)
     return JSONResponse(status_code=201, content=payload)
 
 
@@ -343,6 +243,63 @@ def get_synthesis_pools(run_id: str):
         return collect_run_pools(run_id)
     except ValueError as error:
         raise HTTPException(status_code=404, detail=str(error)) from error
+
+
+@router.get("/runs/{run_id}/component-synthesis")
+def component_synthesis_page(request: Request, run_id: str):
+    try:
+        context = component_synthesis_page_data(run_id)
+    except ValueError as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
+    if context["complete"]:
+        return RedirectResponse(f"/synthesis/runs/{run_id}/component-synthesis/final", status_code=303)
+    return templates.TemplateResponse(
+        request=request,
+        name="component_synthesis.html",
+        context={"request": request, **context},
+    )
+
+
+@router.post("/runs/{run_id}/component-synthesis/results")
+def submit_component_synthesis_result(
+    run_id: str,
+    component_key: str = Form(...),
+    raw_output_text: str = Form(""),
+):
+    try:
+        submit_component_output(run_id, component_key, raw_output_text)
+    except ValueError as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
+    return RedirectResponse(f"/synthesis/runs/{run_id}/component-synthesis", status_code=303)
+
+
+@router.get("/runs/{run_id}/component-synthesis/final")
+def component_synthesis_final_page(request: Request, run_id: str):
+    try:
+        context = component_synthesis_final_data(run_id)
+    except ValueError as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
+    return templates.TemplateResponse(
+        request=request,
+        name="component_synthesis_final.html",
+        context={"request": request, **context},
+    )
+
+
+@router.get("/runs/{run_id}/component-synthesis/final/coding-table.{fmt}")
+def export_component_synthesis_coding_table(run_id: str, fmt: str):
+    if fmt not in EXPORT_FORMATS:
+        raise HTTPException(status_code=422, detail="فرمت خروجی باید CSV، XLSX یا DOCX باشد.")
+    try:
+        table = component_synthesis_final_data(run_id)["coding_table"]
+    except ValueError as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
+    build, media_type = EXPORT_FORMATS[fmt]
+    return Response(
+        build(table),
+        media_type=media_type,
+        headers={"Content-Disposition": f'attachment; filename="coding-table-{run_id[:8]}.{fmt}"'},
+    )
 
 
 @router.get("/runs/{run_id}/category-grouping")
@@ -361,7 +318,7 @@ def category_grouping_page(request: Request, run_id: str):
         }
     except ValueError as error:
         return RedirectResponse(
-            f"/synthesis/runs/{run_id}/pool-preview?{urlencode({'notice': 'ابتدا باید مؤلفه‌های مصاحبه‌های انتخاب‌شده در میز کار یکپارچه‌سازی بررسی و تأیید شوند.'})}",
+            f"/synthesis/runs/{run_id}/pool-preview?{urlencode({'notice': 'ابتدا باید ظروف شش‌گانه برای این اجرا آماده شوند.'})}",
             status_code=303,
         )
     return templates.TemplateResponse(

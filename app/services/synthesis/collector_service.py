@@ -102,7 +102,7 @@ def collect_run_pools(run_id: str, *, persist: bool = True) -> dict[str, Any]:
     if existing and persist:
         mark_stage_results_stale(
             run_id,
-            ("category_grouping", "theme_synthesis", "phenomenon_synthesis", "relationship_synthesis", "final_model"),
+            ("component_synthesis", "category_grouping", "theme_synthesis", "phenomenon_synthesis", "relationship_synthesis", "final_model"),
         )
 
     pools: dict[str, list[dict[str, Any]]] = {key: [] for key in COMPONENT_KEYS}
@@ -111,6 +111,7 @@ def collect_run_pools(run_id: str, *, persist: bool = True) -> dict[str, Any]:
     source_categories: dict[str, list[dict[str, Any]]] = {}
     source_metadata: dict[str, dict[str, Any]] = {}
     unassigned_categories: list[dict[str, Any]] = []
+    excluded_categories: list[dict[str, Any]] = []
     reference_issues: list[dict[str, Any]] = []
     extraction_errors: list[dict[str, Any]] = []
     incomplete_classifications: list[dict[str, Any]] = []
@@ -236,17 +237,30 @@ def collect_run_pools(run_id: str, *, persist: bool = True) -> dict[str, Any]:
 
         for category_id, component_keys in mapping["assignments"].items():
             category = categories_by_id[category_id]
+            included = False
             for component_key in component_keys:
                 references = mapping["references_by_component"][component_key].get(category_id, [])
                 evidence_ids = _evidence_refs_for_category(category, references, source["evidence"])
-                pools[component_key].append(build_category_source_item(
-                    source, category, component_key, references, evidence_ids,
-                ))
+                item = build_category_source_item(source, category, component_key, references, evidence_ids)
+                if item["source_concept_ids"]:
+                    pools[component_key].append(item)
+                    included = True
+            if not included:
+                excluded_categories.append({
+                    "source_project_id": project_id,
+                    "source_category_id": category_id,
+                })
 
         for category_id in mapping["unassigned_category_ids"]:
             category = categories_by_id[category_id]
             evidence_ids = _evidence_refs_for_category(category, [], source["evidence"])
             item = build_category_source_item(source, category, "unassigned_categories", [], evidence_ids)
+            if not item["source_concept_ids"]:
+                excluded_categories.append({
+                    "source_project_id": project_id,
+                    "source_category_id": category_id,
+                })
+                continue
             unassigned_categories.append({
                 "source_project_id": project_id,
                 "source_interview_id": item["source_interview_id"],
@@ -290,7 +304,10 @@ def collect_run_pools(run_id: str, *, persist: bool = True) -> dict[str, Any]:
         (item["source_project_id"], item["source_category_id"])
         for key in COMPONENT_KEYS[:-1] for item in pools[key]
     }
-    unique_excluded = set()
+    unique_excluded = {
+        (item["source_project_id"], item["source_category_id"])
+        for item in excluded_categories
+    }
     metadata = {
         "run_id": run_id,
         "source_count": source_count,
@@ -324,7 +341,7 @@ def collect_run_pools(run_id: str, *, persist: bool = True) -> dict[str, Any]:
         "incomplete_classifications": incomplete_classifications,
         "extraction_errors": extraction_errors,
         "review_items": review_items,
-        "excluded_categories": [],
+        "excluded_categories": excluded_categories,
         "metadata": metadata,
     }
     result["validation_report"] = validate_pool_output(result)
@@ -334,12 +351,12 @@ def collect_run_pools(run_id: str, *, persist: bool = True) -> dict[str, Any]:
             "pool_extraction",
             "interview_pools",
             version=result["version"],
-            status="review_required" if review_items or extraction_errors or not result["validation_report"]["valid"] else "ready",
+            status="ready",
             input_hash=source_input_hash,
             output_json=result,
             validation_report_json=result["validation_report"],
             researcher_edits_json={"decisions": []},
-            approval_status="pending" if review_items or extraction_errors or not result["validation_report"]["valid"] else "approved",
+            approval_status="approved",
         )
         result = saved["output_json"]
     return result

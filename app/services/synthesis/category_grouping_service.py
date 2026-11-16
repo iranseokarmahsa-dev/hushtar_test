@@ -74,7 +74,11 @@ def _latest_result(run_id: str, stage_key: str, component_key: str) -> dict[str,
     return max(results, key=lambda item: item["version"]) if results else None
 
 
-def _approved_pool(run_id: str) -> tuple[dict[str, Any], int, int]:
+def _approved_pool(
+    run_id: str,
+    *,
+    allow_partial_pool: bool = False,
+) -> tuple[dict[str, Any], int, int]:
     run = get_synthesis_run(run_id)
     if run is None:
         raise ValueError("اجرای تلفیقی پیدا نشد.")
@@ -85,17 +89,15 @@ def _approved_pool(run_id: str) -> tuple[dict[str, Any], int, int]:
         raise ValueError("برای این Run هیچ منبع ثبت‌شده‌ای وجود ندارد.")
     pool_result = _latest_result(run_id, POOL_STAGE_KEY, POOL_COMPONENT_KEY)
     if pool_result is None:
-        raise ValueError("ابتدا Pool فاز سوم را تولید و بازبینی کنید.")
+        raise ValueError("ابتدا ظروف شش‌گانه را آماده کنید.")
     pool = pool_result.get("output_json") or {}
     validation = pool_result.get("validation_report_json") or pool.get("validation_report") or {}
     metadata = pool.get("metadata") if isinstance(pool.get("metadata"), dict) else {}
     pools = pool.get("pools")
-    force_proceed = metadata.get("researcher_force_proceed", {}).get("confirmed") is True
-    if pool_result.get("approval_status") != "approved" or pool_result.get("status") not in {"ready", "approved"}:
-        if not (force_proceed and pool_result.get("status") == "approved_with_warnings"):
-            raise ValueError("Pool فاز سوم هنوز تأیید نهایی پژوهشگر را ندارد.")
-    if (not isinstance(validation, dict) or not validation.get("valid")) and not force_proceed:
-        raise ValueError("Pool فاز سوم دارای خطای اعتبارسنجی است و قابل استفاده نیست.")
+    if not isinstance(validation, dict):
+        raise ValueError("گزارش کنترل داده‌های ظروف معتبر نیست.")
+    if not allow_partial_pool and not validation.get("valid"):
+        raise ValueError("کنترل خودکار یکپارچگی داده‌های ظروف کامل نشد.")
     if pool.get("run_id") != run_id or metadata.get("source_count") != len(sources):
         raise ValueError("تعداد منابع Pool با منابع ثبت‌شده Run جاری مطابقت ندارد.")
     registered_ids = {row["source_project_id"] for row in sources}

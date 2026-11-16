@@ -57,12 +57,20 @@ def _create_run(monkeypatch, tmp_path, source_count: int = 3, component_keys=Non
         }]
         project_data = {
             "paragraphs": [{"paragraph_id": f"P{index + 1}", "text": f"پیش از {quote} پس از"}],
+            "concepts": [{
+                "concept_id": f"CONCEPT{index + 1}",
+                "paragraph_ids": [f"P{index + 1}"],
+                "original_concept": f"مفهوم {index + 1}",
+            }],
             "analysis": {"interview_analysis": {
                 "categories": [category],
                 "paradigm_model": paradigm_model,
                 "central_phenomenon": {"title": "پدیده مستقل"},
                 "relationships": [],
             }},
+            "researcher_edits": {
+                "concept_reviews": {f"CONCEPT{index + 1}": {"confirmed": True}},
+            },
         }
         update_project(project["project_id"], **project_data)
         projects.append(project)

@@ -122,7 +122,7 @@ def record_pool_review_decision(
     )
     mark_stage_results_stale(
         run_id,
-        ("category_grouping", "theme_synthesis", "phenomenon_synthesis", "relationship_synthesis", "final_model"),
+        ("component_synthesis", "category_grouping", "theme_synthesis", "phenomenon_synthesis", "relationship_synthesis", "final_model"),
     )
     return saved["output_json"]
 
@@ -179,7 +179,7 @@ def record_pool_force_proceed(run_id: str, *, reason: str) -> dict[str, Any]:
     )
     mark_stage_results_stale(
         run_id,
-        ("category_grouping", "theme_synthesis", "phenomenon_synthesis", "relationship_synthesis", "final_model"),
+        ("component_synthesis", "category_grouping", "theme_synthesis", "phenomenon_synthesis", "relationship_synthesis", "final_model"),
     )
     return saved["output_json"]
 

@@ -23,11 +23,20 @@ def _project_or_404(project_id: str):
 @router.get("")
 def projects_page(request: Request):
 	projects = list_projects()
-	eligibility = {project["project_id"]: summarize_project_eligibility(project) for project in projects}
+	eligibility = {
+		project["project_id"]: summarize_project_eligibility(project, require_pool_ready=True)
+		for project in projects
+	}
 	return templates.TemplateResponse(
 		request=request,
 		name="projects.html",
-		context={"projects": projects, "eligibility": eligibility, "selection_mode": False},
+		context={
+			"projects": projects,
+			"eligibility": eligibility,
+			"selection_mode": True,
+			"selection_error": None,
+			"selection_form": {"selected_ids": []},
+		},
 	)
 
 

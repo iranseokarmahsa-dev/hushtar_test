@@ -60,6 +60,7 @@ def _project_payload(project_id: str, index: int, *, category_id: str = "CAT01")
             "relationships": [],
         }},
         "researcher_edits": {
+            "concept_reviews": {f"C{index:03d}": {"confirmed": True}},
             "interview_analysis": {
                 "confirmed": True,
                 "categories": {category_id: {"category_name": f"Approved {index}", "definition": f"Approved definition {index}"}},
@@ -133,7 +134,8 @@ def test_invalid_and_multiple_references_and_unassigned_are_reported(monkeypatch
     first_snapshot = sources[0]["snapshot"]
     interview = first_snapshot["analysis"]["interview_analysis"]
     interview["paradigm_model"]["contextual_conditions"] = [{"category_ids": ["CAT01", "MISSING"]}]
-    interview["categories"].append({"category_id": "UNASSIGNED", "category_name": "Unassigned", "concept_ids": [], "evidence": []})
+    interview["categories"].append({"category_id": "UNASSIGNED", "category_name": "Unassigned", "concept_ids": ["C-UNASSIGNED"], "evidence": []})
+    first_snapshot["researcher_edits"]["concept_reviews"]["C-UNASSIGNED"] = {"confirmed": True}
     sources[0]["snapshot"] = first_snapshot
     _replace_snapshot(sources[0], first_snapshot)
 
@@ -273,9 +275,10 @@ def test_review_decision_creates_new_version_and_preserves_old(monkeypatch, tmp_
         "category_id": "CAT-X",
         "category_name": "Independent category",
         "definition": "Synthetic definition",
-        "concept_ids": [],
+        "concept_ids": ["C-X"],
         "evidence": [],
     })
+    snapshot["researcher_edits"]["concept_reviews"]["C-X"] = {"confirmed": True}
     _replace_snapshot(source, snapshot)
     pool = collect_run_pools(run["run_id"])
 
@@ -305,9 +308,10 @@ def test_review_assignment_moves_only_pool_copy(monkeypatch, tmp_path):
         "category_id": "CAT-X",
         "category_name": "Independent category",
         "definition": "Synthetic definition",
-        "concept_ids": [],
+        "concept_ids": ["C-X"],
         "evidence": [],
     })
+    snapshot["researcher_edits"]["concept_reviews"]["C-X"] = {"confirmed": True}
     _replace_snapshot(source, snapshot)
     pool = collect_run_pools(run["run_id"])
 
@@ -336,9 +340,10 @@ def test_pool_routes_expose_extraction_and_review(monkeypatch, tmp_path):
         "category_id": "CAT-X",
         "category_name": "Independent category",
         "definition": "Synthetic definition",
-        "concept_ids": [],
+        "concept_ids": ["C-X"],
         "evidence": [],
     })
+    snapshot["researcher_edits"]["concept_reviews"]["C-X"] = {"confirmed": True}
     _replace_snapshot(source, snapshot)
     client = TestClient(app)
 

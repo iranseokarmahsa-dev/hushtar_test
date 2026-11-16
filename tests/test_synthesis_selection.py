@@ -166,7 +166,7 @@ def test_valid_two_sources_create_run(monkeypatch, tmp_path):
     assert len(payload["sources"]) == 2
 
 
-def test_direct_grouping_entry_redirects_to_pool_preview_when_pool_is_missing(monkeypatch, tmp_path):
+def test_run_creation_builds_pool_and_allows_direct_grouping(monkeypatch, tmp_path):
     _reset_db(monkeypatch, tmp_path)
     first = create_project("مصاحبه اول", "موضوع مشترک")
     second = create_project("مصاحبه دوم", "موضوع مشترک")
@@ -191,28 +191,27 @@ def test_direct_grouping_entry_redirects_to_pool_preview_when_pool_is_missing(mo
     )
     run_id = created.json()["run_id"]
 
+    from app.repositories.synthesis_repository import list_stage_results
+    pool_result = next(
+        item for item in list_stage_results(run_id)
+        if item["stage_key"] == "pool_extraction" and item["component_key"] == "interview_pools"
+    )
+    assert pool_result["status"] == "ready"
+    assert pool_result["approval_status"] == "approved"
+
     response = client.get(f"/synthesis/runs/{run_id}/category-grouping")
 
-    assert response.status_code == 303
-    assert response.headers["location"].split("?", 1)[0].endswith("/pool-preview")
-    preview = client.get(response.headers["location"])
-    assert preview.status_code == 200
-    assert "محتوای شش مؤلفه" in preview.text
-    assert "Pool" not in preview.text
+    assert response.status_code == 200
+    assert "Prompt مستقل Markdown" in response.text
 
-def test_force_proceed_is_audited_and_allows_only_intermediate_grouping(monkeypatch, tmp_path):
+
+def test_pool_preview_has_six_containers_without_review_forms(monkeypatch, tmp_path):
     _reset_db(monkeypatch, tmp_path)
     from app.repositories.synthesis_repository import list_stage_results
     projects = [create_project(f"مصاحبه {index}", "موضوع مشترک") for index in (1, 2)]
     from app.core.database import update_project
     for project in projects:
         project.update(_make_complete_project(project["project_id"], project["title"], "موضوع مشترک"))
-        project["analysis"]["interview_analysis"]["paradigm_model"]["causal_conditions"] = []
-        project["analysis"]["interview_analysis"]["categories"][0]["evidence"] = [{
-            "paragraph_id": "P001",
-            "exact_quote": "شاهد موجود نیست",
-            "interpretation": "شاهد نیازمند بازبینی پژوهشگر است.",
-        }]
         update_project(
             project["project_id"],
             paragraphs=project["paragraphs"],
@@ -233,83 +232,20 @@ def test_force_proceed_is_audited_and_allows_only_intermediate_grouping(monkeypa
     run_id = created.json()["run_id"]
     preview = client.get(f"/synthesis/runs/{run_id}/pool-preview")
     assert preview.status_code == 200
-    assert "category_coverage_mismatch" not in preview.text
-    assert "ادامه اجباری با مسئولیت پژوهشگر" in preview.text
-    assert "یکی از شاهدهای این مصاحبه" in preview.text
-
-    response = client.post(
-        f"/synthesis/runs/{run_id}/pool-review/force-proceed",
-        data={"reason": "ادامه برای مقایسه اکتشافی", "confirmed": "true"},
-        follow_redirects=False,
-    )
-    assert response.status_code == 303
-    latest = max(
-        (item for item in list_stage_results(run_id) if item["stage_key"] == "pool_extraction"),
-        key=lambda item: item["version"],
-    )
-    assert latest["status"] == "approved_with_warnings"
-    assert latest["approval_status"] == "approved"
-    assert latest["output_json"]["metadata"]["researcher_force_proceed"]["reason"] == "ادامه برای مقایسه اکتشافی"
-    assert latest["validation_report_json"]["valid"] is False
+    assert "ظروف شش‌گانه" in preview.text
+    assert "شرایط علّی" in preview.text
+    assert "پدیده محوری" in preview.text
+    assert "شرایط زمینه‌ای" in preview.text
+    assert "شرایط مداخله‌گر" in preview.text
+    assert "راهبردهای کنش و تعامل" in preview.text
+    assert "پیامدها" in preview.text
+    assert "pool-review/decision" not in preview.text
+    assert "pool-review/force-proceed" not in preview.text
+    assert "تأیید نهایی مؤلفه‌ها" not in preview.text
 
     grouping = client.get(f"/synthesis/runs/{run_id}/category-grouping")
     assert grouping.status_code == 200
     assert "Prompt مستقل Markdown" in grouping.text
-
-
-def test_pool_item_can_be_confirmed_without_researcher_reason(monkeypatch, tmp_path):
-    _reset_db(monkeypatch, tmp_path)
-    first = create_project("مصاحبه اول", "موضوع مشترک")
-    second = create_project("مصاحبه دوم", "موضوع مشترک")
-    from app.core.database import update_project
-    for project in (first, second):
-        project.update(_make_complete_project(project["project_id"], project["title"], "موضوع مشترک"))
-        project["analysis"]["interview_analysis"]["paradigm_model"]["causal_conditions"] = []
-        update_project(
-            project["project_id"],
-            paragraphs=project["paragraphs"],
-            concepts=project["concepts"],
-            analysis=project["analysis"],
-            researcher_edits=project["researcher_edits"],
-        )
-    client = TestClient(app, follow_redirects=False)
-    created = client.post(
-        "/synthesis/runs",
-        data={
-            "title": "تحلیل آزمایشی",
-            "study_topic": "موضوع مشترک",
-            "selected_ids": [first["project_id"], second["project_id"]],
-        },
-    )
-    run_id = created.json()["run_id"]
-    client.get(f"/synthesis/runs/{run_id}/pool-preview")
-    from app.repositories.synthesis_repository import list_stage_results
-    latest = max(
-        (item for item in list_stage_results(run_id) if item["stage_key"] == "pool_extraction"),
-        key=lambda item: item["version"],
-    )
-    review_item = next(item for item in latest["output_json"]["review_items"] if item["decision_status"] != "approved")
-
-    response = client.post(
-        f"/synthesis/runs/{run_id}/pool-review/decision",
-        data={
-            "source_project_id": review_item["source_project_id"],
-            "category_id": review_item["category_id"],
-            "review_item_id": review_item["review_item_id"],
-            "pool_version": latest["version"],
-            "decision": "assign",
-            "component_key": "causal_conditions",
-        },
-    )
-
-    assert response.status_code == 303
-    updated = max(
-        (item for item in list_stage_results(run_id) if item["stage_key"] == "pool_extraction"),
-        key=lambda item: item["version"],
-    )
-    decision = updated["researcher_edits_json"]["decisions"][-1]
-    assert decision["reason"] == "تخصیص با تأیید پژوهشگر"
-    assert decision["approval_status"] == "approved"
 
 
 def test_incomplete_single_interview_is_eligible_when_source_coverage_is_verified(monkeypatch, tmp_path):
@@ -336,7 +272,7 @@ def test_incomplete_single_interview_is_eligible_when_source_coverage_is_verifie
     assert response.status_code == 201
 
 
-def test_source_with_unverified_evidence_is_selectable_with_warning(monkeypatch, tmp_path):
+def test_source_with_unverified_evidence_is_ready_after_ai_analysis(monkeypatch, tmp_path):
     _reset_db(monkeypatch, tmp_path)
     project = create_project("مصاحبه با شاهد نامعتبر", "پژوهش مشترک")
     project.update(_make_complete_project(project["project_id"], "مصاحبه با شاهد نامعتبر", "پژوهش مشترک"))
@@ -372,24 +308,19 @@ def test_source_with_unverified_evidence_is_selectable_with_warning(monkeypatch,
             "title": "تحلیل",
             "study_topic": "پژوهش مشترک",
             "selected_ids": f"{project['project_id']},{other['project_id']}",
-            "confirm_shared_topic": "on",
         },
     )
 
-    assert response.status_code == 201
-    assert response.json()["selected_source_count"] == 2
-    assert len(response.json()["eligibility_warnings"]) == 1
-    assert "concept C001 در P001 (fuzzy_match)" in response.json()["eligibility_warnings"][0]["reason"]
-
     selection_page = client.get("/synthesis/select")
-    assert f'href="/results/{project["project_id"]}/interview-analysis?show_quality=1#quality-audit"' in selection_page.text
-    review_page = client.get(f"/results/{project['project_id']}/interview-analysis?show_quality=1")
-    assert 'id="quality-audit"' in review_page.text
-    assert 'id="quality-evidence-0"' in review_page.text
-    assert 'id="stage-import-stage1"' in client.get(f"/analysis/{project['project_id']}").text
+    row_input = next(line for line in selection_page.text.splitlines() if project["project_id"] in line and 'name="selected_ids"' in line)
+    assert "disabled" not in row_input
+    assert "fuzzy_match" not in selection_page.text
+    assert "unmatched" not in selection_page.text
+    assert "quality-audit" not in selection_page.text
+    assert response.status_code == 201
 
 
-def test_incomplete_interview_checkbox_is_not_disabled(monkeypatch, tmp_path):
+def test_interview_with_ai_output_is_selectable_before_researcher_review(monkeypatch, tmp_path):
     _reset_db(monkeypatch, tmp_path)
     project = create_project("مصاحبه نیازمند بازبینی", "موضوع")
     source = _make_complete_project(project["project_id"], project["title"], "موضوع")
@@ -408,10 +339,13 @@ def test_incomplete_interview_checkbox_is_not_disabled(monkeypatch, tmp_path):
     assert response.status_code == 200
     row_input = next(line for line in response.text.splitlines() if project["project_id"] in line and 'name="selected_ids"' in line)
     assert "disabled" not in row_input
-    assert "مجاز با هشدار" in response.text
+    assert "آماده" in response.text
+    assert f'href="/projects/{project["project_id"]}"' in response.text
+    assert "fuzzy_match" not in response.text
+    assert "بازبینی مفاهیم" not in response.text
 
 
-def test_selection_page_shows_deferred_incomplete_analysis_as_eligible(monkeypatch, tmp_path):
+def test_selection_page_shows_ready_status_without_review_links(monkeypatch, tmp_path):
     _reset_db(monkeypatch, tmp_path)
     project = create_project("مصاحبه نامشخص", "موضوع")
     source = _make_complete_project(project["project_id"], "مصاحبه نامشخص", "موضوع")
@@ -433,13 +367,12 @@ def test_selection_page_shows_deferred_incomplete_analysis_as_eligible(monkeypat
 
     assert response.status_code == 200
     assert 'name="selected_ids"' in response.text
-    assert "مجاز با هشدار" in response.text
-    assert "پدیده محوری این مصاحبه جداگانه تعیین نشده" in response.text
-    assert "فاز ششم تحلیل تلفیقی" in response.text
-    assert f'href="/results/{project["project_id"]}/interview-analysis?show_quality=1#quality-audit"' in response.text
+    assert "آماده" in response.text
+    assert "پدیده محوری این مصاحبه جداگانه تعیین نشده" not in response.text
+    assert f'href="/results/{project["project_id"]}/interview-analysis?show_quality=1#quality-audit"' not in response.text
 
 
-def test_different_topics_require_explicit_confirmation(monkeypatch, tmp_path):
+def test_different_topics_do_not_require_confirmation(monkeypatch, tmp_path):
     _reset_db(monkeypatch, tmp_path)
     first = create_project("مصاحبه الف", "موضوع الف")
     second = create_project("مصاحبه ب", "موضوع ب")
@@ -456,26 +389,13 @@ def test_different_topics_require_explicit_confirmation(monkeypatch, tmp_path):
             "title": "تحلیل",
             "study_topic": "پژوهش مشترک",
             "selected_ids": f"{first['project_id']},{second['project_id']}",
-            "confirm_shared_topic": "off",
         },
     )
-    assert response.status_code == 400
-    assert "تفاوت موضوع" in response.json()["detail"]
-
-    confirmed_response = client.post(
-        "/synthesis/runs",
-        data={
-            "title": "تحلیل",
-            "study_topic": "پژوهش مشترک",
-            "selected_ids": f"{first['project_id']},{second['project_id']}",
-            "confirm_shared_topic": "on",
-        },
-    )
-    assert confirmed_response.status_code == 201
-    assert confirmed_response.json()["selected_source_count"] == 2
+    assert response.status_code == 201
+    assert response.json()["selected_source_count"] == 2
 
 
-def test_browser_selection_preserves_form_then_redirects_to_pool_preview(monkeypatch, tmp_path):
+def test_browser_selection_starts_without_topic_confirmation(monkeypatch, tmp_path):
     _reset_db(monkeypatch, tmp_path)
     first = create_project("مصاحبه الف", "موضوع الف")
     second = create_project("مصاحبه ب", "موضوع ب")
@@ -492,41 +412,36 @@ def test_browser_selection_preserves_form_then_redirects_to_pool_preview(monkeyp
         )
 
     client = TestClient(app)
-    form_data = {
-        "title": "تحلیل تلفیقی",
-        "study_topic": "پژوهش مشترک",
-        "selected_ids": [first["project_id"], second["project_id"]],
-    }
-    warning_response = client.post(
-        "/synthesis/runs",
-        data=form_data,
-        headers={"accept": "text/html"},
-    )
-    assert warning_response.status_code == 400
-    assert "موضوع مصاحبه‌های انتخاب‌شده متفاوت است" in warning_response.text
-    assert 'name="confirm_shared_topic"' in warning_response.text
-    assert 'value="تحلیل تلفیقی"' in warning_response.text
-    assert warning_response.text.count("checked") >= 2
+    selection_page = client.get("/synthesis/select")
+    assert selection_page.status_code == 200
+    assert "شروع تحلیل تلفیقی" in selection_page.text
+    assert 'name="confirm_shared_topic"' not in selection_page.text
+    assert 'name="title"' not in selection_page.text
+    assert 'name="study_topic"' not in selection_page.text
+    assert "unmatched" not in selection_page.text
+    assert "fuzzy_match" not in selection_page.text
+    assert "/results/" not in selection_page.text
 
-    confirmed_response = client.post(
+    started_response = client.post(
         "/synthesis/runs",
-        data={**form_data, "confirm_shared_topic": "on"},
+        data={"selected_ids": [first["project_id"], second["project_id"]]},
         headers={"accept": "text/html"},
         follow_redirects=False,
     )
-    assert confirmed_response.status_code == 303
-    location = confirmed_response.headers["location"]
+    assert started_response.status_code == 303
+    location = started_response.headers["location"]
     assert location.endswith("/pool-preview")
     preview = client.get(location)
     assert preview.status_code == 200
     assert "محتوای شش مؤلفه" in preview.text
+    assert "ظروف شش‌گانه" in preview.text
     assert "شرایط علّی" in preview.text
-    assert "اجرای مقوله‌سازی و تم‌سازی" in preview.text
+    assert "تأیید نهایی مؤلفه‌ها" not in preview.text
     run_id = location.rstrip("/").split("/")[-2]
-    assert f'href="/synthesis/runs/{run_id}/category-grouping"' in preview.text
-    grouping = client.get(f"/synthesis/runs/{run_id}/category-grouping")
-    assert grouping.status_code == 200
-    assert "Prompt مستقل Markdown" in grouping.text
+    assert f'href="/synthesis/runs/{run_id}/component-synthesis"' in preview.text
+    component_steps = client.get(f"/synthesis/runs/{run_id}/component-synthesis")
+    assert component_steps.status_code == 200
+    assert "گام ۱ از ۶" in component_steps.text
 
 
 def test_snapshot_count_matches_selected_sources(monkeypatch, tmp_path):

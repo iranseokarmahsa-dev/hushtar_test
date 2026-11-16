@@ -451,6 +451,7 @@ def mark_synthesis_runs_stale_for_source(source_project_id: str) -> list[str]:
 		now = _now()
 		stage_keys = (
 			"pool_extraction",
+			"component_synthesis",
 			"category_grouping",
 			"theme_synthesis",
 			"phenomenon_synthesis",

@@ -224,7 +224,7 @@ def load_final_synthesis_inputs(run_id: str) -> dict[str, Any]:
         interview = analysis.get("interview_analysis")
         if not isinstance(interview, dict):
             raise ValueError(f"تحلیل مستقل مصاحبه {source.get('source_title')} وجود ندارد.")
-        eligibility = summarize_project_eligibility(snapshot)
+        eligibility = summarize_project_eligibility(snapshot, require_pool_ready=True)
         if not eligibility["eligible"]:
             raise ValueError(
                 f"تحلیل مستقل مصاحبه {source.get('source_title')} آماده نیست: "

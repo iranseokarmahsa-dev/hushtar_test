@@ -6,6 +6,7 @@ from typing import Any
 
 from app.core.database import get_project
 from app.repositories.synthesis_repository import create_synthesis_run, save_run_sources
+from app.services.synthesis.collector_service import collect_run_pools
 
 
 def _eligibility_failure(
@@ -21,9 +22,14 @@ def _eligibility_failure(
 
 
 def summarize_project_eligibility(
-    project: dict[str, Any], *, allow_incomplete: bool = False
+    project: dict[str, Any],
+    *,
+    allow_incomplete: bool = False,
+    require_pool_ready: bool = False,
 ) -> dict[str, Any]:
     result = _summarize_project_eligibility(project)
+    if require_pool_ready:
+        return _summarize_interview_output_ready(project)
     if not allow_incomplete or project is None or result.get("eligible"):
         return result
     return {
@@ -217,6 +223,27 @@ def _summarize_project_eligibility(project: dict[str, Any]) -> dict[str, Any]:
     return {"eligible": True, "status": "مجاز", "reason": "مصاحبه برای تحلیل تلفیقی آماده است."}
 
 
+def _summarize_interview_output_ready(project: dict[str, Any]) -> dict[str, Any]:
+    if project is None:
+        return {"eligible": False, "status": "ناموجود", "reason": "رکورد مصاحبه پیدا نشد."}
+    analysis = project.get("analysis") if project else None
+    if not isinstance(analysis, dict) or analysis.get("schema_version") != "2.0":
+        return _eligibility_failure(
+            project,
+            "خروجی تحلیل مصاحبه هنوز ثبت نشده است.",
+            "/analysis/{project_id}#prompt-panel",
+            "ورود خروجی تحلیل",
+        )
+    if not isinstance(analysis.get("interview_analysis"), dict):
+        return _eligibility_failure(
+            project,
+            "خروجی تحلیل مستقل مصاحبه هنوز ثبت نشده است.",
+            "/analysis/{project_id}#stage-import-stage2",
+            "ورود خروجی تحلیل",
+        )
+    return {"eligible": True, "status": "آماده", "reason": "خروجی تحلیل ثبت شده است."}
+
+
 def parse_selected_ids(selected_ids: Any, *, deduplicate: bool = True) -> list[str]:
     if selected_ids is None:
         return []
@@ -244,24 +271,16 @@ def parse_selected_ids(selected_ids: Any, *, deduplicate: bool = True) -> list[s
     return cleaned
 
 
-def _shared_topic_or_error(selected_projects: list[dict[str, Any]]) -> bool:
-    topics = {str(project.get("topic") or "").strip() for project in selected_projects}
-    return len(topics) > 1
-
-
 def create_synthesis_run_from_selection(
     *,
     title: str,
     study_topic: str,
     selected_ids: Any,
-    confirm_shared_topic: bool,
 ) -> dict[str, Any]:
     raw_ids = parse_selected_ids(selected_ids, deduplicate=False)
     if len(raw_ids) != len(set(raw_ids)):
         raise ValueError("شناسه‌های انتخاب‌شده نباید تکراری باشند.")
     normalized_ids = parse_selected_ids(selected_ids)
-    if not title.strip():
-        raise ValueError("عنوان تحلیل تلفیقی الزامی است.")
     if len(normalized_ids) < 2:
         raise ValueError("حداقل دو مصاحبه برای ایجاد Run لازم است.")
 
@@ -272,29 +291,25 @@ def create_synthesis_run_from_selection(
             raise ValueError(f"مصاحبه با شناسه {project_id} پیدا نشد.")
         selected_projects.append(project)
 
-    eligibility_warnings = [
-        {
-            "project_id": project["project_id"],
-            "title": project.get("title", "مصاحبه نامشخص"),
-            "reason": summarize_project_eligibility(project, allow_incomplete=True)["reason"],
-        }
-        for project in selected_projects
-        if summarize_project_eligibility(project, allow_incomplete=True)["status"] == "مجاز با هشدار"
-    ]
+    if any(not summarize_project_eligibility(project, require_pool_ready=True)["eligible"] for project in selected_projects):
+        raise ValueError("فقط مصاحبه‌های آماده را برای تحلیل تلفیقی انتخاب کنید.")
 
-    topics_differ = _shared_topic_or_error(selected_projects)
-    if topics_differ and not confirm_shared_topic:
-        raise ValueError(
-            "موضوع مصاحبه‌های انتخاب‌شده متفاوت است. اگر با وجود این تفاوت قصد ادامه دارید، "
-            "تأیید آگاهانهٔ تفاوت موضوع را علامت بزنید."
-        )
+    project_titles = [str(project.get("title") or "مصاحبه") for project in selected_projects]
+    run_title = title.strip() or f"تحلیل تلفیقی · {'، '.join(project_titles[:2])}"
+    topics = list(dict.fromkeys(
+        str(project.get("topic") or "").strip()
+        for project in selected_projects
+        if str(project.get("topic") or "").strip()
+    ))
+    run_topic = study_topic.strip() or "؛ ".join(topics)
 
     run = create_synthesis_run(
-        title=title.strip(),
-        study_topic=study_topic.strip(),
+        title=run_title,
+        study_topic=run_topic,
         expected_source_count=len(normalized_ids),
     )
     sources = save_run_sources(run["run_id"], normalized_ids)
+    collect_run_pools(run["run_id"])
     return {
         "run_id": run["run_id"],
         "title": run["title"],
@@ -304,6 +319,5 @@ def create_synthesis_run_from_selection(
         "schema_version": run["schema_version"],
         "selected_source_count": len(sources),
         "expected_source_count": len(normalized_ids),
-        "eligibility_warnings": eligibility_warnings,
         "sources": sources,
     }

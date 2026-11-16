@@ -1,0 +1,32 @@
+{% extends "base.html" %}
+{% block title %}مدل پارادایمی تلفیقی | نظریه‌یار{% endblock %}
+{% block content %}
+<section class="page-heading">
+	<div><p class="eyebrow">خروجی شش گام تحلیل تلفیقی</p><h1>مدل پارادایمی و جدول جامع کدگذاری</h1><p class="lede">مقوله‌ها و تم‌های ذخیره‌شده از هر شش مؤلفه کنار هم قرار گرفته‌اند.</p><small>شناسه اجرا: <code>{{ run_id }}</code></small></div>
+	<div class="page-actions"><a class="button button-secondary" href="/synthesis/runs/{{ run_id }}/pool-preview">ظروف منبع</a><a class="button button-secondary" href="/projects">تاریخچه پروژه‌ها</a></div>
+</section>
+
+<section class="panel workflow-panel">
+	<div class="section-heading"><div><p class="eyebrow">مدل پارادایمی</p><h2>ساختار نهایی شش‌مؤلفه‌ای</h2></div></div>
+	<div class="integration-grid final-component-grid">
+	{% for component in components %}
+		<section class="integration-component">
+			<h3>{{ component.label }} <span class="count-tag">{{ component.categories|length }}</span></h3>
+			{% for theme in component.themes %}
+			<article class="review-card">
+				<h4>تم: {{ theme.title }}</h4><p>{{ theme.definition }}</p>
+				<ul>{% for category in theme.categories %}<li><strong>{{ category.title }}</strong><p>{{ category.definition }}</p></li>{% endfor %}</ul>
+			</article>
+			{% endfor %}
+			{% for category in component.unthemed_categories %}
+			<article class="review-card"><h4>{{ category.title }}</h4><p>{{ category.definition }}</p><small>مقولهٔ مستقل از تم</small></article>
+			{% endfor %}
+			{% if not component.categories %}<p class="muted">مقوله‌ای برای این مؤلفه ثبت نشده است.</p>{% endif %}
+		</section>
+	{% endfor %}
+	</div>
+</section>
+
+{% set export_base = '/synthesis/runs/' ~ run_id ~ '/component-synthesis/final/coding-table' %}
+{% include "_coding_table.html" %}
+{% endblock %}

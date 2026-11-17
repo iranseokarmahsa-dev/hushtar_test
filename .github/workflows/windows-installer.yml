@@ -1,0 +1,42 @@
+name: Windows installer
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install application and packaging dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt pyinstaller
+      - name: Package Hooshyar
+        run: pyinstaller --noconfirm --clean installer/hooshyar.spec
+      - name: Bundle Graphviz
+        shell: pwsh
+        run: |
+          choco install graphviz --no-progress -y
+          $dotPath = (Get-ChildItem -Path "$env:ProgramFiles\Graphviz" -Filter dot.exe -Recurse | Select-Object -First 1).FullName
+          if (-not $dotPath) { throw "Graphviz dot.exe was not found after installation." }
+          $graphvizRoot = Split-Path (Split-Path $dotPath -Parent) -Parent
+          Copy-Item -Path $graphvizRoot -Destination "dist/Hooshyar/graphviz" -Recurse
+      - name: Install Inno Setup
+        run: choco install innosetup --no-progress -y
+      - name: Build Windows installer
+        run: '& "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" installer/hooshyar.iss'
+      - uses: actions/upload-artifact@v4
+        with:
+          name: HOOSHYAR-Setup
+          path: installer-output/HOOSHYAR-Setup.exe
+          if-no-files-found: error

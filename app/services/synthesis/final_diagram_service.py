@@ -62,6 +62,7 @@ def prepare_final_model_diagram(model: dict[str, Any]) -> dict[str, Any]:
             "source_concept_ids": item.get("source_concept_ids", []),
             "source_subcategory_ids": item.get("source_subcategory_ids", []),
             "category_unit_ids": item.get("category_unit_ids", []),
+            "integrated_categories": item.get("integrated_categories", []),
             "theme_id": item.get("theme_id"),
             "selection_reason": item.get("selection_reason", ""),
             "evidence_ref_ids": item.get("evidence_ref_ids", []),
@@ -77,6 +78,7 @@ def prepare_final_model_diagram(model: dict[str, Any]) -> dict[str, Any]:
                 "title": node["title"],
                 "description": node["description"],
                 "node_type": node["node_type"],
+                "integrated_categories": node.get("integrated_categories", []),
             }
             for node in entity_nodes
             if node["component_key"] == component_key

@@ -18,6 +18,7 @@
 12. پژوهشگر تصمیم نهایی را می‌گیرد. زنجیره تفکر داخلی تولید نکن.
 13. جایگاه هر تم در مؤلفه تأییدشده‌اش ثابت است؛ تم را به مؤلفه دیگری منتقل یا بازنویسی نکن.
 14. رابطه را فقط میان نودهای مدل، از جمله پدیده محوری تلفیقی، پیشنهاد کن؛ پدیده‌ها و روابط مستقل مصاحبه‌ها فقط منبع پشتیبان‌اند.
+15. روایت نظری منسجمی بنویس که پیوند تم‌ها با پدیده محوری و روابط جهت‌دار یا بازخوردیِ مستند را توضیح دهد؛ رابطهٔ بی‌پشتوانه یا علیت اثبات‌نشده را قطعی جلوه نده.
 
 ## فراداده
 - run_id: {{RUN_ID}}
@@ -33,6 +34,7 @@
 سند Markdown کامل زیر را بدون متن اضافه ارائه بده. ترتیب Heading و فیلدها ثابت است؛ بخش‌های خالی با `NONE`.
 
 در METADATA به‌ترتیب: `schema_version`, `run_id`, `stage_key`, `input_hash`, `source_phase_version`, `phenomenon_version`.
+پس از METADATA بخش `THEORETICAL STORYLINE` را با روایت نظری منسجم و مبتنی بر داده بنویس.
 برای هر رابطه به‌ترتیب: `relationship_id`, `source_node_id`, `target_node_id`, `relationship_type`, `direction`, `description`, `reasoning`, `supporting_source_relationship_ids`, `supporting_source_phenomenon_ids`, `supporting_source_item_ids`, `supporting_category_unit_ids`, `evidence_ref_ids`, `confidence`, `needs_researcher_review`.
 برای هر نود بدون رابطه به‌ترتیب: `node_id`, `component_key`, `reason`, `needs_researcher_review`.
 برای هر تناقض به‌ترتیب: `contradiction_id`, `source_node_id`, `target_node_id`, `source_relationship_ids`, `source_item_ids`, `evidence_ref_ids`, `description`, `reasoning`, `needs_researcher_review`.

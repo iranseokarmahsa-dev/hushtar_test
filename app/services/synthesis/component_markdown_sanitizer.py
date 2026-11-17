@@ -5,8 +5,11 @@ import re
 
 
 ROOT_HEADING = "COMPONENT SYNTHESIS RESULT"
+THEME_ROOT_HEADING = "COMPONENT THEMES RESULT"
 HEADING_LEVELS = {
     ROOT_HEADING: 1,
+    THEME_ROOT_HEADING: 1,
+    "THEME ABSTRACTION RESULT": 1,
     "METADATA": 2,
     "INTEGRATED CATEGORIES": 2,
     "THEMES": 2,
@@ -132,6 +135,35 @@ def sanitize_component_synthesis_markdown(text: str) -> str:
     root_positions = [
         index for index, line in enumerate(lines)
         if line.strip() == f"# {ROOT_HEADING}"
+    ]
+    if not root_positions:
+        return "\n".join(lines)
+
+    end_positions = [
+        index for index, line in enumerate(lines)
+        if line.strip() == "## END OF RESULT"
+    ]
+    for index, root_position in enumerate(root_positions):
+        next_root = root_positions[index + 1] if index + 1 < len(root_positions) else len(lines)
+        end_position = next(
+            (position for position in end_positions if root_position < position < next_root),
+            None,
+        )
+        if end_position is not None:
+            return "\n".join(lines[root_position:end_position + 1])
+        if index + 1 < len(root_positions):
+            return "\n".join(lines[root_position:next_root]).rstrip()
+
+    return "\n".join(lines[root_positions[0]:])
+
+
+def sanitize_theme_abstraction_markdown(text: str) -> str:
+    """Repair copied headings and remove an outer code fence from theme output."""
+    lines = _normalize_lines(unwrap_outer_markdown_code_fence(text))
+    root = f"# {THEME_ROOT_HEADING}"
+    root_positions = [
+        index for index, line in enumerate(lines)
+        if line.strip() == root
     ]
     if not root_positions:
         return "\n".join(lines)

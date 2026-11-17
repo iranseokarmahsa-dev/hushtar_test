@@ -50,6 +50,43 @@ def build_final_model_data(
             "definition": str(source_node["definition"]),
             "theme_id": str(source_node["node_id"]) if node_type == "theme" else None,
             "category_unit_ids": list(dict.fromkeys(source_node.get("category_unit_ids", []))),
+            "integrated_categories": [
+                {
+                    "category_unit_id": str(unit_id),
+                    "category_id": str(category.get("category_id") or ""),
+                    "title": str(category.get("title") or ""),
+                    "definition": str(category.get("definition") or ""),
+                    "source_items": [
+                        {
+                            "source_item_id": str(item_id),
+                            "initial_category": str(
+                                source_item_by_id.get(str(item_id), {}).get(
+                                    "researcher_approved_category_name"
+                                )
+                                or source_item_by_id.get(str(item_id), {}).get(
+                                    "original_category_name"
+                                )
+                                or ""
+                            ),
+                            "source_category_id": str(
+                                source_item_by_id.get(str(item_id), {}).get("source_category_id")
+                                or ""
+                            ),
+                            "concept_ids": [
+                                str(concept_id)
+                                for concept_id in source_item_by_id.get(
+                                    str(item_id), {}
+                                ).get("source_concept_ids", [])
+                            ],
+                        }
+                        for item_id in category.get("source_item_ids", [])
+                    ],
+                }
+                for unit_id in source_node.get("category_unit_ids", [])
+                if (
+                    category := inputs.get("category_units", {}).get(str(unit_id))
+                ) is not None
+            ],
             "source_item_ids": list(dict.fromkeys(source_node.get("source_item_ids", []))),
             "source_project_ids": sorted({
                 source_project_by_item[item_id]
@@ -138,6 +175,12 @@ def build_final_model_data(
         if relation.get("review_status") != "approved":
             continue
         relation_id = str(relation["relationship_id"])
+        evidence_ref_ids = list(dict.fromkeys(relation.get("evidence_ref_ids", [])))
+        evidence_level = (
+            "DIRECT"
+            if evidence_ref_ids or relation.get("supporting_source_relationship_ids")
+            else "CONCEPTUAL_INFERENCE"
+        )
         edges.append({
             "edge_id": f"fedge_{stable_hash([inputs['run']['run_id'], relation_id])[:24]}",
             "relationship_id": relation_id,
@@ -147,11 +190,13 @@ def build_final_model_data(
             "direction": str(relation["direction"]),
             "description": str(relation["description"]),
             "reasoning": str(relation["reasoning"]),
+            "analytical_mechanism": str(relation.get("reasoning") or relation.get("description") or ""),
+            "evidence_level": evidence_level,
             "supporting_source_relationship_ids": list(dict.fromkeys(
                 relation.get("supporting_source_relationship_ids", [])
             )),
             "source_item_ids": list(dict.fromkeys(relation.get("supporting_source_item_ids", []))),
-            "evidence_ref_ids": list(dict.fromkeys(relation.get("evidence_ref_ids", []))),
+            "evidence_ref_ids": evidence_ref_ids,
             "researcher_approved": True,
             "source_phase": "relationship_synthesis",
             "source_phase_version": relationship_result["version"],
@@ -275,14 +320,126 @@ def build_final_model_data(
         )
         for item in (stage_result.get("output_json") or {}).get("contradictions", [])
     ]
+    core_supporting_interview_ids = sorted({
+        str(evidence_index[evidence_id]["source_interview_id"])
+        for evidence_id in phenomenon.get("evidence_ref_ids", [])
+        if evidence_id in evidence_index
+        and evidence_index[evidence_id].get("source_interview_id")
+    })
+    core_supporting_interview_ids.extend(sorted({
+        str(source_id)
+        for source_id in phenomenon.get("supporting_source_phenomenon_ids", [])
+        if source_id in source_phenomena_by_id
+        for source in [source_phenomena_by_id[source_id]]
+        if source.get("source_interview_id") or source.get("source_project_id")
+        for source_id in [str(source.get("source_interview_id") or source.get("source_project_id"))]
+    }))
+    core_supporting_interview_ids = sorted(set(core_supporting_interview_ids))
+
+    core_phenomenon = {
+        "title": str(phenomenon.get("title") or ""),
+        "definition": str(phenomenon.get("definition") or ""),
+        "dimensions": [
+            str(item)
+            for item in (phenomenon.get("dimensions", []) or [])
+            if str(item).strip()
+        ],
+        "selection_reason": str(phenomenon.get("selection_reason") or ""),
+        "supporting_interview_ids": core_supporting_interview_ids,
+        "supporting_evidence_ids": list(dict.fromkeys(phenomenon.get("evidence_ref_ids", []))),
+        "divergences": [
+            {
+                "contradiction_id": item.get("contradiction_id"),
+                "description": item.get("description"),
+                "reasoning": item.get("reasoning"),
+                "review_status": item.get("review_status"),
+                "evidence_ref_ids": item.get("evidence_ref_ids", []),
+            }
+            for item in contradictions
+            if item.get("stage_key") == "phenomenon_synthesis"
+        ],
+    }
+    independent_theme_ids = [
+        str(node["node_id"])
+        for node in nodes
+        if node.get("node_type") == "independent_category"
+    ]
+    for edge in edges:
+        endpoint_ids = {edge["source_node_id"], edge["target_node_id"]}
+        evidence_ids = set(edge.get("evidence_ref_ids", []))
+        supporting_interviews = {
+            str(evidence_index[evidence_id]["source_interview_id"])
+            for evidence_id in evidence_ids
+            if evidence_id in evidence_index
+            and evidence_index[evidence_id].get("source_interview_id")
+        }
+        supporting_categories = {
+            str(category_unit_id)
+            for node_id in endpoint_ids
+            for node in nodes
+            if node["node_id"] == node_id
+            for category_unit_id in node.get("category_unit_ids", [])
+        }
+        edge["supporting_interview_ids"] = sorted(supporting_interviews)
+        edge["supporting_category_unit_ids"] = sorted(supporting_categories)
+
+    isolated_themes = [
+        {
+            "theme_id": str(node["node_id"]),
+            "title": str(node.get("title") or ""),
+            "definition": str(node.get("definition") or ""),
+            "component_key": str(node.get("component_key") or ""),
+            "supporting_category_ids": list(dict.fromkeys(node.get("category_unit_ids", []))),
+            "supporting_interview_ids": sorted({
+                str(source_project_id)
+                for source_project_id in node.get("source_project_ids", [])
+                if source_project_id
+            }),
+            "reason": (
+                "هیچ رابطه نظری مستند و تأییدشده‌ای برای این تم ثبت نشده است."
+            ),
+            "status": "NEEDS_REVIEW" if not node.get("evidence_ref_ids") else "ISOLATED",
+        }
+        for node in nodes
+        if node["node_id"] in independent_theme_ids
+    ]
     model = {
         "run_id": inputs["run"]["run_id"],
         "source_interview_ids": sorted({
             str(source["snapshot"].get("interview_id") or source["source_project_id"])
             for source in source_rows
         }),
+        "core_phenomenon": core_phenomenon,
+        "isolated_themes": isolated_themes,
+        "theme_register": [
+            {
+                "theme_id": str(node["node_id"]),
+                "title": str(node.get("title") or ""),
+                "definition": str(node.get("definition") or ""),
+                "component_key": str(node.get("component_key") or ""),
+                "supporting_category_ids": list(dict.fromkeys(node.get("category_unit_ids", []))),
+                "supporting_interview_ids": sorted({
+                    str(value) for value in node.get("source_project_ids", [])
+                    if value
+                }),
+                "status": (
+                    "CONNECTED"
+                    if any(
+                        edge["source_node_id"] == node["node_id"]
+                        or edge["target_node_id"] == node["node_id"]
+                        for edge in edges
+                    )
+                    else "ISOLATED"
+                ),
+            }
+            for node in nodes
+            if node.get("node_type") in {"theme", "independent_category"}
+        ],
         "nodes": nodes,
         "edges": edges,
+        "theoretical_storyline": str(
+            (relationship_result.get("output_json") or {}).get("theoretical_storyline") or ""
+        ),
         "edge_source_relationship_ids": sorted({
             source_relationship_id
             for edge in edges
@@ -323,6 +480,7 @@ def build_final_model_data(
         "relationship_hash": relationship_result["input_hash"],
         "nodes": nodes,
         "edges": edges,
+        "theoretical_storyline": model["theoretical_storyline"],
         "components": components,
         "evidence_index": evidence_index,
         "source_traceability": model["source_traceability"],

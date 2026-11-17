@@ -11,7 +11,13 @@ from typing import Any
 from urllib.parse import urlencode
 
 from app.core.database import list_projects
-from app.services.coding_table_service import EXPORT_FORMATS, build_synthesis_coding_table
+from app.services.coding_table_service import (
+    EXPORT_FORMATS,
+    build_final_model_hierarchy_rows,
+    build_synthesis_coding_table,
+    build_stage5_excel,
+    final_model_to_docx,
+)
 from app.repositories.synthesis_repository import list_stage_results, list_synthesis_runs
 from app.services.synthesis_service import create_synthesis_run_from_selection, summarize_project_eligibility
 from app.services.synthesis.collector_service import collect_run_pools
@@ -966,6 +972,47 @@ def export_final_model_coding_table(run_id: str, fmt: str):
         build(build_synthesis_coding_table(run_id, latest["output_json"])),
         media_type=media_type,
         headers={"Content-Disposition": f'attachment; filename="coding-table-{run_id[:8]}.{fmt}"'},
+    )
+
+
+@router.get("/runs/{run_id}/final-model/export.docx")
+def export_final_model_docx(run_id: str):
+    latest = latest_final_model(run_id)
+    if latest is None or latest.get("stale") or latest.get("approval_status") != "approved":
+        raise HTTPException(status_code=409, detail="مدل نهایی معتبر و به‌روز برای دریافت وجود ندارد.")
+    model = latest["output_json"]
+    diagram = prepare_final_model_diagram(model)
+    try:
+        diagram_png = render_paradigm_diagram(diagram, "png")
+    except ExecutableNotFound as error:
+        raise HTTPException(
+            status_code=503,
+            detail="Graphviz روی سرور نصب نیست؛ امکان ساخت فایل Word کامل وجود ندارد.",
+        ) from error
+    table = build_synthesis_coding_table(run_id, model)
+    hierarchy_rows = build_final_model_hierarchy_rows(run_id, model)
+    return Response(
+        content=final_model_to_docx(table, model, diagram_png, hierarchy_rows),
+        media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        headers={
+            "Content-Disposition": f'attachment; filename="final-model-{run_id[:8]}.docx"'
+        },
+    )
+
+
+@router.get("/runs/{run_id}/final-model/export.xlsx")
+def export_final_model_excel(run_id: str):
+    latest = latest_final_model(run_id)
+    if latest is None or latest.get("stale") or latest.get("approval_status") != "approved":
+        raise HTTPException(status_code=409, detail="مدل نهایی معتبر و به‌روز برای دریافت Excel وجود ندارد.")
+    model = latest["output_json"]
+    hierarchy_rows = build_final_model_hierarchy_rows(run_id, model)
+    return Response(
+        content=build_stage5_excel(model, hierarchy_rows),
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={
+            "Content-Disposition": f'attachment; filename="final-model-{run_id[:8]}.xlsx"'
+        },
     )
 
 

@@ -20,11 +20,11 @@ from app.services.synthesis.theme_synthesis_prompt import (
 )
 from app.services.synthesis.category_integration_service import (
     STAGE_KEY as CATEGORY_INTEGRATION_STAGE_KEY,
-    get_approved_category_integrations,
+    get_registered_category_integrations,
 )
 from app.services.synthesis.theme_abstraction_service import (
     STAGE_KEY as THEME_ABSTRACTION_STAGE_KEY,
-    get_approved_theme_abstractions,
+    get_registered_theme_abstractions,
 )
 
 PHENOMENON_STAGE_KEY = "phenomenon_synthesis"
@@ -52,19 +52,16 @@ def _source_relationship_id(project_id: str, local_id: str) -> str:
 def _approved_stage_four(
     run_id: str,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]], dict[str, Any], int] | None:
-    stage_four_rows = [
-        row for row in list_stage_results(run_id)
-        if row["stage_key"] == THEME_ABSTRACTION_STAGE_KEY
-    ]
-    if not stage_four_rows:
-        return None
-
-    theme_libraries = get_approved_theme_abstractions(run_id)
-    if set(theme_libraries) != set(POOL_COMPONENT_KEYS):
-        raise ValueError("برای ساخت مدل نهایی، خروجی تأییدشدهٔ هر پنج مؤلفهٔ مرحلهٔ ۴ لازم است.")
-    category_libraries = get_approved_category_integrations(run_id)
+    category_libraries = get_registered_category_integrations(run_id)
     if set(category_libraries) != set(POOL_COMPONENT_KEYS):
-        raise ValueError("برای ساخت مدل نهایی، کتابخانهٔ معتبر هر پنج مؤلفهٔ مرحلهٔ ۳ لازم است.")
+        return None
+    theme_libraries = get_registered_theme_abstractions(run_id)
+    expected_theme_components = {
+        key for key, library in category_libraries.items()
+        if library["integrated_categories"]
+    }
+    if not expected_theme_components.issubset(theme_libraries):
+        raise ValueError("تم‌های همهٔ مؤلفه‌های دارای داده باید در مرحلهٔ ۴ ثبت شوند.")
 
     pool, _, _ = _approved_pool(run_id)
     evidence_by_id = {
@@ -81,16 +78,34 @@ def _approved_stage_four(
     category_snapshot = []
 
     for component_key in POOL_COMPONENT_KEYS:
-        theme_library = theme_libraries[component_key]
         category_library = category_libraries[component_key]
+        theme_library = theme_libraries.get(component_key)
         theme_result = _latest(run_id, THEME_ABSTRACTION_STAGE_KEY, component_key)
+        if not category_library["integrated_categories"]:
+            category_snapshot.append({
+                "component_key": component_key,
+                "stage_result_id": category_library["stage_result_id"],
+                "version": category_library["version"],
+                "input_hash": category_library["input_hash"],
+                "theme_stage_result_id": (
+                    theme_library.get("stage_result_id") if theme_library else None
+                ),
+                "theme_version": theme_library.get("version") if theme_library else None,
+                "theme_input_hash": theme_library["input_hash"] if theme_library else None,
+            })
+            if theme_result and theme_result.get("status") == "ready_for_researcher_review":
+                result_rows.append(theme_result)
+            continue
+        if theme_library is None:
+            raise ValueError(f"خروجی مرحلهٔ ۴ مؤلفهٔ {component_key} ثبت نشده است.")
         if (
             theme_result is None
-            or theme_result.get("status") != "approved"
-            or theme_result.get("approval_status") != "approved"
+            or theme_result.get("status") not in {"ready_for_researcher_review", "approved"}
+            or theme_result.get("approval_status") not in {"pending", "approved"}
+            or not (theme_result.get("validation_report_json") or {}).get("valid")
             or theme_result.get("stage_result_id") != theme_library["stage_result_id"]
         ):
-            raise ValueError(f"نسخهٔ تأییدشدهٔ تم‌های مؤلفهٔ {component_key} معتبر نیست.")
+            raise ValueError(f"نسخهٔ تم‌های مؤلفهٔ {component_key} معتبر نیست.")
         result_rows.append(theme_result)
 
         source_items = {
@@ -216,9 +231,12 @@ def _approved_stage_four(
         if set(assignments) != set(categories):
             raise ValueError(f"پوشش مقوله‌های مرحلهٔ ۴ در مؤلفهٔ {component_key} کامل نیست.")
 
-    stage_four_version = max(int(row["version"]) for row in result_rows)
     stage_three_version = max(
         int(library["version"]) for library in category_libraries.values()
+    )
+    stage_four_version = max(
+        (int(row["version"]) for row in result_rows),
+        default=stage_three_version,
     )
     aggregate_result = {
         "stage_key": THEME_ABSTRACTION_STAGE_KEY,
@@ -642,6 +660,7 @@ def load_final_synthesis_inputs(run_id: str) -> dict[str, Any]:
         "evidence_to_source_items": evidence_to_source_items,
         "source_item_to_node": mappings["source_item_to_node"],
         "unit_to_node": mappings["unit_to_node"],
+        "category_units": mappings.get("unit_by_id", {}),
         "base_input": base_input,
         "base_input_hash": stable_hash(base_input),
         "phase_five_result": phase_five_result,

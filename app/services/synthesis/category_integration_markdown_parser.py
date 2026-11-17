@@ -89,11 +89,15 @@ def _fields(
         if key in values:
             errors.append(f"{context}: فیلد تکراری `{key}`.")
         is_list = key in list_fields
+        items: list[str] = []
         if is_list and initial not in {"", "NONE"}:
-            errors.append(f"{context}: فهرست `{key}` باید با Bullet List ارائه شود.")
+            items.extend(
+                item.strip()
+                for item in re.split(r"[,،]\s*|\s+", initial)
+                if item.strip()
+            )
         if not is_list and initial == "NONE":
             errors.append(f"{context}: مقدار NONE برای فیلد متنی `{key}` مجاز نیست.")
-        items: list[str] = []
         text_lines = [initial] if initial and not is_list else []
         index += 1
         while index < len(lines) and not FIELD_RE.match(lines[index]):
@@ -117,7 +121,7 @@ def _fields(
             values[key] = items
         else:
             values[key] = "\n".join(text_lines).strip()
-    if tuple(values) != order:
+    if order and tuple(values) != order:
         errors.append(f"{context}: ترتیب فیلدها باید دقیقاً {', '.join(order)} باشد.")
     if errors:
         raise CategoryIntegrationMarkdownError(errors)
@@ -130,60 +134,41 @@ def parse_category_integration_markdown(text: str) -> dict[str, Any]:
     text = sanitize_component_synthesis_markdown(text)
     headings = _headings(text)
     _empty(headings[0].body, "عنوان اصلی")
-
-    index = _expect(headings, 1, 2, "METADATA")
-    metadata = _fields(
-        headings[index - 1].body,
-        context="METADATA",
-        list_fields=set(),
-        order=("run_id", "component_key", "input_hash"),
+    section_index = next(
+        (
+            index for index, heading in enumerate(headings)
+            if heading.level == 2 and heading.title == "INTEGRATED CATEGORIES"
+        ),
+        None,
     )
+    if section_index is None:
+        raise CategoryIntegrationMarkdownError(["بخش INTEGRATED CATEGORIES پیدا نشد."])
 
-    index = _expect(headings, index, 2, "INTEGRATED CATEGORIES")
-    category_section = headings[index - 1].body
-    _empty(category_section, "INTEGRATED CATEGORIES")
     categories = []
-    while index < len(headings) and headings[index].level == 3 and headings[index].title.startswith("CATEGORY: "):
-        node = headings[index]
-        category = _fields(
-            node.body,
-            context=node.title,
-            list_fields={"source_item_ids"},
-            order=("category_id", "title", "definition", "source_item_ids"),
+    for node in headings[section_index + 1:]:
+        if node.level <= 2:
+            break
+        if node.level != 3 or not node.title.startswith("CATEGORY: "):
+            continue
+        try:
+            category = _fields(
+                node.body,
+                context=node.title,
+                list_fields={"items", "item_ids", "source_item_ids"},
+                order=(),
+            )
+        except CategoryIntegrationMarkdownError:
+            continue
+        item_ids = (
+            category.get("items")
+            or category.get("item_ids")
+            or category.get("source_item_ids")
+            or []
         )
         heading_id = node.title.removeprefix("CATEGORY: ").strip()
-        if category["category_id"] != heading_id:
-            raise CategoryIntegrationMarkdownError([
-                "شناسه مقوله در Heading و فیلد category_id باید یکسان باشد."
-            ])
         categories.append(category)
-        index += 1
-    if categories and category_section.strip() in {"NONE", "- NONE"}:
-        raise CategoryIntegrationMarkdownError([
-            "مقدار NONE در INTEGRATED CATEGORIES با تعریف مقوله‌ها هم‌زمان مجاز نیست."
-        ])
-
-    index = _expect(headings, index, 2, "QUALITY AUDIT")
-    quality_audit = _fields(
-        headings[index - 1].body,
-        context="QUALITY AUDIT",
-        list_fields={"warnings"},
-        order=(
-            "total_input_items",
-            "total_assigned_items",
-            "duplicate_source_items",
-            "missing_source_items",
-            "unknown_source_items",
-            "status",
-            "warnings",
-        ),
-    )
-    index = _expect(headings, index, 2, "END OF RESULT")
-    _empty(headings[index - 1].body, "END OF RESULT")
-    if index != len(headings):
-        raise CategoryIntegrationMarkdownError(["پس از END OF RESULT هیچ Heading دیگری مجاز نیست."])
+        category["category_id"] = heading_id
+        category["source_item_ids"] = item_ids
     return {
-        "metadata": metadata,
         "integrated_categories": categories,
-        "quality_audit": quality_audit,
     }

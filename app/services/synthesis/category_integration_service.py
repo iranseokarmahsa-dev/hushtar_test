@@ -44,10 +44,11 @@ def _text_block(value: Any, *, indentation: int = 2) -> str:
 def _render_source_item(
     item: dict[str, Any],
     evidence_by_id: dict[str, dict[str, Any]],
+    item_alias: str,
 ) -> str:
     lines = [
-        f"### SOURCE ITEM: {item['source_item_id']}",
-        f"- source_item_id: {item['source_item_id']}",
+        f"### INPUT ITEM: {item_alias}",
+        f"- item_id: {item_alias}",
         "- interview:",
         _text_block(item.get("source_title") or item.get("source_interview_id") or "مصاحبه"),
         "- initial_category:",
@@ -77,8 +78,7 @@ def _render_source_item(
             evidence_id = str(reference.get("evidence_ref_id") or "")
             evidence = evidence_by_id.get(evidence_id, {})
             lines.extend((
-                f"  - evidence_ref_id: {evidence_id}",
-                "    - quote:",
+                "  - quote:",
                 _text_block(evidence.get("quote") or "", indentation=6),
                 "    - interpretation:",
                 _text_block(evidence.get("interpretation") or "", indentation=6),
@@ -110,8 +110,13 @@ def _component_input(
 def build_category_integration_prompt(run_id: str, component_key: str) -> dict[str, Any]:
     pool, pool_version, source_count = _approved_pool(run_id, allow_partial_pool=True)
     source_items, evidence_by_id = _component_input(pool, component_key)
+    item_id_map = {
+        f"ITEM_{index}": str(item["source_item_id"])
+        for index, item in enumerate(source_items, start=1)
+    }
     source_markdown = "\n\n".join(
-        _render_source_item(item, evidence_by_id) for item in source_items
+        _render_source_item(item, evidence_by_id, f"ITEM_{index}")
+        for index, item in enumerate(source_items, start=1)
     ) or "NONE"
     template = PROMPT_PATH.read_text(encoding="utf-8")
     input_hash = stable_hash({
@@ -123,14 +128,11 @@ def build_category_integration_prompt(run_id: str, component_key: str) -> dict[s
         "prompt_template": template,
     })
     substitutions = {
-        "COMPONENT_KEY": component_key,
         "COMPONENT_LABEL": COMPONENT_LABELS[component_key],
-        "RUN_ID": run_id,
-        "INPUT_HASH": input_hash,
         "SOURCE_ITEMS_MARKDOWN": source_markdown,
     }
     prompt_text = re.sub(
-        r"\{\{(COMPONENT_KEY|COMPONENT_LABEL|RUN_ID|INPUT_HASH|SOURCE_ITEMS_MARKDOWN)\}\}",
+        r"\{\{(COMPONENT_LABEL|SOURCE_ITEMS_MARKDOWN)\}\}",
         lambda match: substitutions[match.group(1)],
         template,
     )
@@ -143,6 +145,7 @@ def build_category_integration_prompt(run_id: str, component_key: str) -> dict[s
         "pool_version": pool_version,
         "source_count": source_count,
         "source_items": source_items,
+        "item_id_map": item_id_map,
         "evidence_by_id": evidence_by_id,
         "prompt_text": prompt_text,
     }
@@ -313,6 +316,87 @@ def _validation_text(report: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
+def _normalize_integrated_categories(
+    parsed_categories: list[dict[str, Any]],
+    prompt: dict[str, Any],
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    source_items = prompt["source_items"]
+    aliases = prompt["item_id_map"]
+    source_by_id = {
+        str(item["source_item_id"]): item
+        for item in source_items
+    }
+    id_map = {**aliases, **{value: value for value in aliases.values()}}
+    normalized: list[dict[str, Any]] = []
+    assigned: set[str] = set()
+
+    for category in parsed_categories:
+        raw_ids = category.get("source_item_ids") or []
+        source_item_ids = list(dict.fromkeys(
+            id_map[str(item_id).strip()]
+            for item_id in raw_ids
+            if str(item_id).strip() in id_map
+        ))
+        if not source_item_ids:
+            continue
+        first_source = source_by_id[source_item_ids[0]]
+        title = str(category.get("title") or "").strip()
+        definition = str(category.get("definition") or "").strip()
+        title = title or str(
+            first_source.get("researcher_approved_category_name")
+            or first_source.get("original_category_name")
+            or "مقولهٔ مستقل"
+        )
+        definition = definition or str(first_source.get("definition") or title)
+        normalized.append({
+            "category_id": f"cat_{len(normalized) + 1}",
+            "title": title,
+            "definition": definition,
+            "source_item_ids": source_item_ids,
+            "review_status": "pending",
+        })
+        assigned.update(source_item_ids)
+
+    missing_item_ids = [
+        str(item["source_item_id"])
+        for item in source_items
+        if str(item["source_item_id"]) not in assigned
+    ]
+    for source_item_id in missing_item_ids:
+        item = source_by_id[source_item_id]
+        title = str(
+            item.get("researcher_approved_category_name")
+            or item.get("original_category_name")
+            or "مقولهٔ مستقل"
+        )
+        normalized.append({
+            "category_id": f"cat_{len(normalized) + 1}",
+            "title": title,
+            "definition": str(item.get("definition") or title),
+            "source_item_ids": [source_item_id],
+            "review_status": "pending",
+        })
+
+    return normalized, {
+        "valid": True,
+        "errors": [],
+        "warnings": (
+            [f"{len(missing_item_ids)} مورد جاافتاده به‌صورت مقولهٔ مستقل افزوده شد."]
+            if missing_item_ids else []
+        ),
+        "checked_source_item_count": len(source_items),
+        "assigned_source_item_count": sum(
+            len(category["source_item_ids"]) for category in normalized
+        ),
+        "duplicate_source_item_count": (
+            sum(len(category["source_item_ids"]) for category in normalized)
+            - len({item_id for category in normalized for item_id in category["source_item_ids"]})
+        ),
+        "missing_source_item_count": 0,
+        "unknown_source_item_count": 0,
+    }
+
+
 def submit_category_integration_output(
     run_id: str,
     component_key: str,
@@ -322,13 +406,18 @@ def submit_category_integration_output(
     parsed = None
     try:
         parsed = parse_category_integration_markdown(raw_output_text)
-        report = validate_category_integration_result(
-            parsed,
-            run_id=run_id,
-            component_key=component_key,
-            input_hash=prompt["input_hash"],
-            source_items=prompt["source_items"],
+        integrated_categories, report = _normalize_integrated_categories(
+            parsed.get("integrated_categories", []),
+            prompt,
         )
+        parsed = {
+            "metadata": {
+                "run_id": run_id,
+                "component_key": component_key,
+                "input_hash": prompt["input_hash"],
+            },
+            "integrated_categories": integrated_categories,
+        }
     except CategoryIntegrationMarkdownError as error:
         report = {
             "valid": False,
@@ -340,9 +429,6 @@ def submit_category_integration_output(
             "missing_source_item_count": len(prompt["source_items"]),
             "unknown_source_item_count": 0,
         }
-    if parsed is not None and report["valid"]:
-        for category in parsed["integrated_categories"]:
-            category["review_status"] = "pending"
     version = get_next_stage_version(run_id, STAGE_KEY, component_key)
     saved = save_stage_result(
         run_id,

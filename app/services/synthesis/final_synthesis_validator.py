@@ -377,6 +377,8 @@ def validate_relationship_result(
         stage_key="relationship_synthesis",
         phenomenon_version=phenomenon_version,
     )
+    if not _text(parsed.get("theoretical_storyline")):
+        _issue(errors, "missing_theoretical_storyline")
     indexes = _source_indexes(inputs)
     node_by_id = {str(item["node_id"]): item for item in model_nodes}
     node_ids = set(node_by_id)

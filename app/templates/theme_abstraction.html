@@ -2,7 +2,7 @@
 {% block title %}مرحله چهارم: انتزاع تم | هوشیار{% endblock %}
 {% block content %}
 <section class="page-heading">
-	<div><p class="eyebrow">مرحله ۴ · پنج مؤلفهٔ مستقل</p><h1>انتزاع مفهومی و استخراج تم</h1><p class="lede">ورودی، آخرین خروجی معتبر ثبت‌شدهٔ همان مؤلفه در مرحلهٔ ۳ است؛ تأیید پژوهشگر مرحلهٔ ۳ مستقل می‌ماند.</p><small>شناسه اجرا: <code>{{ run_id }}</code></small></div>
+	<div><p class="eyebrow">مرحله ۴ · پنج مؤلفهٔ مستقل</p><h1>انتزاع مفهومی و استخراج تم</h1><p class="lede">پرامپت هر مؤلفه از خروجی ثبت‌شدهٔ همان مؤلفه در مرحلهٔ ۳ ساخته می‌شود؛ تأیید جداگانهٔ مرحلهٔ ۳ لازم نیست.</p><small>شناسه اجرا: <code>{{ run_id }}</code></small></div>
 	<div class="page-actions">
 		<a class="button button-secondary" href="/synthesis/runs/{{ run_id }}/category-integration">بازگشت به مرحلهٔ ۳</a>
 		<a class="button button-secondary" href="/synthesis/runs">همه اجراها</a>
@@ -10,11 +10,11 @@
 </section>
 {% if request.query_params.get('received') %}
 {% if request.query_params.get('received') == '1' %}
-<p class="alert alert-success" role="status">خروجی مؤلفه‌های مرحلهٔ ۳ ثبت شد. پس از تأیید پژوهشگر برای هر پنج مؤلفه، استخراج تم را اجرا کنید.</p>
+<p class="alert alert-success" role="status">خروجی مرحلهٔ ۳ ثبت شد؛ مؤلفه‌های دارای داده برای استخراج تم آماده‌اند.</p>
 {% else %}
 {% set received_notice = namespace(label=request.query_params.get('received')) %}
 {% for component in components %}{% if component.key == request.query_params.get('received') %}{% set received_notice.label = component.label %}{% endif %}{% endfor %}
-<p class="alert alert-success" role="status">خروجی معتبر مؤلفهٔ «{{ received_notice.label }}» برای بازبینی پژوهشگر ثبت شد. مؤلفهٔ جاری: «{{ active_prompt.component_label if active_prompt else '' }}».</p>
+<p class="alert alert-success" role="status">خروجی بخش «{{ received_notice.label }}» با موفقیت ثبت شد؛ اکنون به بخش «{{ active_prompt.component_label if active_prompt else '' }}» رفته‌اید.</p>
 {% endif %}
 {% endif %}
 {% if request.query_params.get('approved') %}
@@ -22,7 +22,12 @@
 {% for component in components %}{% if component.key == request.query_params.get('approved') %}{% set approved_notice.label = component.label %}{% endif %}{% endfor %}
 <p class="alert alert-success" role="status">کتابخانهٔ «{{ approved_notice.label }}» تأیید نهایی شد. بازبینی مؤلفهٔ جاری را ادامه دهید.</p>
 {% endif %}
-{% if all_theme_libraries_approved %}<p class="alert alert-success" role="status">هر پنج کتابخانهٔ مرحلهٔ ۴ تأیید شده‌اند. <a href="/synthesis/runs/{{ run_id }}/component-synthesis">ادامه به تلفیق شش‌گام</a></p>{% endif %}
+{% if stage_four_complete %}
+<p class="alert alert-success" role="status">
+	تم‌های مؤلفه‌های دارای داده ثبت شده‌اند؛ مؤلفه‌های بدون داده مانع ادامه نیستند.
+	<a class="button button-primary" href="/synthesis/runs/{{ run_id }}/phenomenon-synthesis">ادامه به مرحله ۵: ترسیم و تدوین مدل نهایی نظریه داده‌بنیاد</a>
+</p>
+{% endif %}
 
 <section class="panel">
 	<h2>انتخاب مؤلفه</h2>
@@ -30,11 +35,13 @@
 	{% for component in components %}
 		<a class="{% if component.key == active_component_key %}is-active{% endif %}" href="/synthesis/runs/{{ run_id }}/theme-abstraction?component_key={{ component.key }}">
 			<strong>{{ component.label }}</strong>
-			{% if component.category_library %}<span class="status-pill success">خروجی معتبر مرحلهٔ ۳ · v{{ component.category_library.version }}</span>
-			{% else %}<span class="status-pill warning">بدون خروجی معتبر مرحلهٔ ۳</span>{% endif %}
-			{% if component.approved_result %}<span class="status-pill success">مرحلهٔ ۴ تأیید نهایی</span>
-			{% elif component.latest and component.latest.validation_report_json.valid %}<span class="status-pill warning">در انتظار بازبینی پژوهشگر</span>{% endif %}
-			{% if component.latest %}<small>آخرین نسخهٔ تم: {{ component.latest.version }} · {{ component.latest.status }}</small>{% endif %}
+			{% if component.category_library %}
+				{% if component.category_library.integrated_categories %}
+					{% if component.registered_theme %}<span class="status-pill success">ثبت شد ✓</span>
+					{% else %}<span class="status-pill success">آماده استخراج تم</span>{% endif %}
+				{% else %}<span class="status-pill warning">بدون داده · ادامه را مسدود نمی‌کند</span>{% endif %}
+			{% else %}<span class="status-pill warning">قفل · ابتدا خروجی مرحلهٔ ۳ را ثبت کنید</span>{% endif %}
+			{% if component.latest %}<small>آخرین نسخهٔ تم: {{ component.latest.version }}</small>{% endif %}
 		</a>
 	{% endfor %}
 	</nav>
@@ -44,17 +51,36 @@
 <section class="panel"><p class="alert alert-warning">{{ page_error }}</p></section>
 {% endif %}
 
-{% if active_prompt %}
-{% if active_prompt.inherited_warnings %}
-<section class="alert alert-warning" role="status">
-	<strong>هشدارهای شواهد موروثی: {{ active_prompt.inherited_warnings|length }}</strong>
-	<p>قابلیت ردیابی منشأ به معنی تأیید اعتبار نقل‌قول نیست.</p>
-	<ul>{% for warning in active_prompt.inherited_warnings %}<li>{{ warning.issue_type }} · {{ warning.paragraph_id or 'بدون شناسهٔ پاراگراف' }} · <code>{{ warning.source_project_id }}</code></li>{% endfor %}</ul>
-</section>
+{% if active_prompt and not active_prompt.source_categories %}
+<section class="panel"><p class="alert alert-warning">این مؤلفه در مرحلهٔ ۳ خروجی خالی دارد؛ وضعیت «بدون داده» است و برای ادامه به مرحلهٔ ۵ نیازی به ثبت خروجی مرحلهٔ ۴ نیست.</p></section>
 {% endif %}
+
+{% if active_prompt and active_prompt.source_categories %}
 <section class="panel">
-	<p class="eyebrow">{{ active_prompt.component_label }}</p>
-		<h2>مقوله‌های مبدأ ثبت‌شده</h2>
+	<label for="theme-abstraction-prompt">پرامپت آماده کپی</label>
+	<textarea id="theme-abstraction-prompt" rows="18" readonly>{{ active_prompt.prompt_text }}</textarea>
+	<div class="prompt-actions">
+		<a class="button button-secondary" href="/synthesis/runs/{{ run_id }}/theme-abstraction/prompt.md?component_key={{ active_component_key }}">دانلود پرامپت Markdown</a>
+		<button type="button" class="button button-secondary" data-copy-theme-abstraction-prompt>کپی پرامپت</button>
+	</div>
+	<h2>ثبت خروجی Markdown</h2>
+	<p>با ثبت خروجی، شناسه‌های کوتاه به‌صورت خودکار نگاشت می‌شوند و مقوله‌های جاافتاده به تم مستقل تبدیل می‌شوند.</p>
+	{% if latest and latest.status == 'invalid' and not latest.stale %}<div class="alert alert-warning"><strong>خروجی نیازمند اصلاح است</strong><pre>{{ latest.validation_report_text }}</pre></div>{% endif %}
+	{% if latest and latest.stale %}<p class="alert alert-warning">مقوله‌های تأییدشدهٔ مرحلهٔ ۳ تغییر کرده‌اند؛ نسخهٔ قبلی قابل تأیید نیست.</p>{% endif %}
+	<form method="post" action="/synthesis/runs/{{ run_id }}/theme-abstraction/results" enctype="multipart/form-data">
+		<input type="hidden" name="component_key" value="{{ active_component_key }}">
+		<p class="active-component-register">در حال ثبت خروجی برای بخش: {{ active_prompt.component_label }}</p>
+		<label for="theme-abstraction-output">خروجی Markdown را ثبت کنید</label>
+		<textarea id="theme-abstraction-output" name="raw_output_text" rows="12" placeholder="# COMPONENT THEMES RESULT"></textarea>
+		<label>یا انتخاب فایل خروجی Markdown<input type="file" name="markdown_file" accept=".md,.markdown,text/markdown"></label>
+		<button class="button button-primary" type="submit">ثبت و رفتن به مؤلفهٔ بعدی</button>
+	</form>
+</section>
+
+<section class="panel">
+	<p class="eyebrow">مرحلهٔ ۴</p>
+	<h2>{{ active_prompt.component_label }}</h2>
+	<h3>مقوله‌های مبدأ ثبت‌شده</h3>
 	<p>{{ active_prompt.source_categories|length }} مقوله · نسخهٔ مرحلهٔ ۳: {{ active_prompt.source_phase_version }}</p>
 	{% for category in active_prompt.source_categories %}
 	<article class="review-card">
@@ -66,29 +92,6 @@
 		</ul></details>{% endif %}
 	</article>
 	{% else %}<p>برای این مؤلفه کتابخانه خالی است؛ خروجی باید هر دو فهرست را خالی اعلام کند.</p>{% endfor %}
-</section>
-
-<section class="panel">
-	<label for="theme-abstraction-prompt">پرامپت Markdown این مؤلفه</label>
-	<textarea id="theme-abstraction-prompt" rows="18" readonly>{{ active_prompt.prompt_text }}</textarea>
-	<div class="prompt-actions">
-		<a class="button button-secondary" href="/synthesis/runs/{{ run_id }}/theme-abstraction/prompt.md?component_key={{ active_component_key }}">دانلود پرامپت Markdown</a>
-		<button type="button" class="button button-secondary" data-copy-theme-abstraction-prompt>کپی پرامپت</button>
-	</div>
-</section>
-
-<section class="panel">
-	<h2>ثبت خروجی Markdown</h2>
-	<p>خروجی ابتدا از نظر فراداده و تعیین‌تکلیف دقیق همهٔ مقوله‌ها اعتبارسنجی می‌شود و سپس به بازبینی پژوهشگر می‌رود.</p>
-	{% if latest and latest.status == 'invalid' and not latest.stale %}<div class="alert alert-warning"><strong>خروجی نیازمند اصلاح است</strong><pre>{{ latest.validation_report_text }}</pre></div>{% endif %}
-	{% if latest and latest.stale %}<p class="alert alert-warning">مقوله‌های تأییدشدهٔ مرحلهٔ ۳ تغییر کرده‌اند؛ نسخهٔ قبلی قابل تأیید نیست.</p>{% endif %}
-	<form method="post" action="/synthesis/runs/{{ run_id }}/theme-abstraction/results" enctype="multipart/form-data">
-		<input type="hidden" name="component_key" value="{{ active_component_key }}">
-		<label for="theme-abstraction-output">خروجی را جای‌گذاری کنید</label>
-		<textarea id="theme-abstraction-output" name="raw_output_text" rows="12" placeholder="# COMPONENT THEMES RESULT"></textarea>
-		<label>یا انتخاب فایل خروجی Markdown<input type="file" name="markdown_file" accept=".md,.markdown,text/markdown"></label>
-		<button class="button button-primary" type="submit">Parse و اعتبارسنجی خروجی</button>
-	</form>
 </section>
 {% endif %}
 

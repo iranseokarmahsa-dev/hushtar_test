@@ -1,9 +1,14 @@
 from __future__ import annotations
 
 from copy import deepcopy
+from io import BytesIO
+import struct
+import zlib
 
 from fastapi.testclient import TestClient
 import pytest
+from docx import Document
+from openpyxl import load_workbook
 
 from app.core import database as database_module
 from app.core.database import create_project, init_db, update_project
@@ -30,6 +35,7 @@ from app.services.synthesis.final_synthesis_service import (
 )
 from app.services.synthesis import final_synthesis_service
 from app.services.synthesis.final_diagram_service import prepare_final_model_diagram
+from app.services.coding_table_service import build_stage5_excel
 from app.services.synthesis.phenomenon_prompt_builder import (
     FinalSynthesisPromptSizeLimitError,
     build_phenomenon_prompt,
@@ -59,6 +65,68 @@ def test_force_proceeded_pool_still_blocks_final_model_when_validation_fails(mon
 
     with pytest.raises(ValueError, match="مدل نهایی قابل ساخت نیست"):
         final_synthesis_service._model_input("run-force-proceed")
+
+
+def test_stage5_excel_contains_required_sheets():
+    model = {
+        "nodes": [
+            {
+                "node_id": "central_1",
+                "node_type": "central_phenomenon",
+                "title": "پدیده جامع",
+                "definition": "تعریف جامع",
+                "component_key": "central_phenomenon",
+            },
+            {
+                "node_id": "theme_1",
+                "node_type": "theme",
+                "title": "تم نمونه",
+                "definition": "تعریف تم",
+                "component_key": "causal_conditions",
+                "integrated_categories": [],
+                "source_project_ids": ["project_1"],
+            },
+            {
+                "node_id": "category_1",
+                "node_type": "independent_category",
+                "title": "مقوله مستقل",
+                "definition": "بدون رابطه",
+                "component_key": "consequences",
+                "integrated_categories": [],
+                "source_project_ids": ["project_1"],
+            },
+        ],
+        "edges": [],
+        "source_traceability": {
+            "sources": [{
+                "source_interview_id": "interview_1",
+                "central_phenomenon": {
+                    "title": "پدیده مصاحبه",
+                    "definition": "تعریف مصاحبه",
+                    "evidence_ref_ids": ["EV1"],
+                },
+            }],
+        },
+    }
+    content = build_stage5_excel(model, [
+        {
+            "interview": "مصاحبه ۱",
+            "concept": "مفهوم ۱",
+            "initial_category": "مقوله اولیه",
+            "integrated_category": "مقوله تلفیقی",
+            "theme": "تم نمونه",
+            "component": "شرایط علّی",
+        },
+    ])
+    workbook = load_workbook(BytesIO(content), read_only=True)
+    assert workbook.sheetnames == [
+        "Core_Phenomenon_Comparison",
+        "Core_Phenomenon_Divergences",
+        "Themes_and_Categories_Matrix",
+        "Theoretical_Relations",
+        "Isolated_Themes",
+        "Full_Traceability_Interviews",
+    ]
 
 
 def _make_project(index: int):
@@ -412,6 +480,8 @@ def _relationship_markdown(prompt: dict) -> str:
         "- stage_key: relationship_synthesis", f"- input_hash: {prompt['input_hash']}",
         f"- source_phase_version: {prompt['source_phase_version']}",
         f"- phenomenon_version: {prompt['phenomenon_version']}",
+        "", "## THEORETICAL STORYLINE",
+        "تم‌ها پیرامون پدیدهٔ محوری سازمان می‌یابند؛ رابطه‌ها فقط در حدود شواهد پشتیبان تفسیر می‌شوند.",
         "", "## RELATIONSHIPS", "",
         "##### RELATIONSHIP: AI_RELATIONSHIP_001", "",
         "- relationship_id: AI_RELATIONSHIP_001",
@@ -456,6 +526,23 @@ def _relationship_markdown(prompt: dict) -> str:
         "- final_status: complete",
     ))
     return "\n".join(lines)
+
+
+def _one_pixel_png() -> bytes:
+    def chunk(kind: bytes, data: bytes) -> bytes:
+        return (
+            struct.pack(">I", len(data))
+            + kind
+            + data
+            + struct.pack(">I", zlib.crc32(kind + data) & 0xFFFFFFFF)
+        )
+
+    return (
+        b"\x89PNG\r\n\x1a\n"
+        + chunk(b"IHDR", struct.pack(">IIBBBBB", 1, 1, 8, 2, 0, 0, 0))
+        + chunk(b"IDAT", zlib.compress(b"\x00\xff\xff\xff"))
+        + chunk(b"IEND", b"")
+    )
 
 
 def test_final_synthesis_review_and_model_traceability(monkeypatch, tmp_path):
@@ -545,6 +632,7 @@ def test_final_synthesis_review_and_model_traceability(monkeypatch, tmp_path):
     assert model["edges"][0]["relationship_type"] == "direct"
     assert model["edges"][0]["direction"] == "source_to_target"
     assert model["edges"][0]["evidence_ref_ids"]
+    assert model["theoretical_storyline"]
     assert model["evidence_index"]
     assert len(model["source_traceability"]["sources"]) == 2
     diagram = prepare_final_model_diagram(model)
@@ -564,10 +652,24 @@ def test_final_synthesis_review_and_model_traceability(monkeypatch, tmp_path):
         for edge in diagram["edges"]
         if edge["kind"] == "structural"
     )
+    assert diagram["entity_nodes"][0]["integrated_categories"]
     page = TestClient(app).get(f"/synthesis/runs/{run['run_id']}/final-model")
     assert page.status_code == 200
     assert "نمودار مدل نهایی" in page.text
     assert "final-model/export/svg" in page.text
+    assert "final-model/export.docx" in page.text
+    monkeypatch.setattr(
+        synthesis_router,
+        "render_paradigm_diagram",
+        lambda _diagram, _format: _one_pixel_png(),
+    )
+    docx_response = TestClient(app).get(
+        f"/synthesis/runs/{run['run_id']}/final-model/export.docx"
+    )
+    assert docx_response.status_code == 200
+    document = Document(BytesIO(docx_response.content))
+    assert any("تم‌ها پیرامون پدیده" in paragraph.text for paragraph in document.paragraphs)
+    assert document.tables
     node_id = model["nodes"][0]["node_id"]
     layout_response = TestClient(app).post(
         f"/synthesis/runs/{run['run_id']}/final-model/layout",

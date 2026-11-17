@@ -61,7 +61,7 @@ def _valid_markdown(prompt: dict, source_item_ids: list[str] | None = None) -> s
     return "\n".join(lines)
 
 
-def test_five_component_prompts_are_independent_markdown_runs(monkeypatch, tmp_path):
+def test_five_component_prompts_use_short_private_item_aliases(monkeypatch, tmp_path):
     run = _create_run(monkeypatch, tmp_path)
     prompts = [
         build_category_integration_prompt(run["run_id"], component_key)
@@ -71,11 +71,13 @@ def test_five_component_prompts_are_independent_markdown_runs(monkeypatch, tmp_p
     assert len({prompt["component_key"] for prompt in prompts}) == 5
     assert len({prompt["input_hash"] for prompt in prompts}) == 5
     for prompt in prompts:
-        assert f"- component_key: {prompt['component_key']}" in prompt["prompt_text"]
-        assert "## Source Itemهای همین مؤلفه" in prompt["prompt_text"]
+        assert "ITEM_1" in prompt["prompt_text"] or not prompt["source_items"]
+        assert all(item["source_item_id"] not in prompt["prompt_text"] for item in prompt["source_items"])
+        assert "METADATA" not in prompt["prompt_text"]
+        assert "QUALITY AUDIT" not in prompt["prompt_text"]
+        assert "input_hash" not in prompt["prompt_text"]
         assert "## THEMES" not in prompt["prompt_text"]
-        assert "بلوک کد واحد با سه علامت بک‌تیک" in prompt["prompt_text"]
-        assert "اگر تعداد آیتم‌های ورودی کم است" in prompt["prompt_text"]
+        assert "ITEM_1" in prompt["item_id_map"] or not prompt["source_items"]
     assert len(prompts[0]["source_items"]) == 2
     assert all(not prompt["source_items"] for prompt in prompts[1:])
     empty_result = submit_category_integration_output(
@@ -122,6 +124,40 @@ def test_markdown_file_upload_is_supported(monkeypatch, tmp_path):
         },
     )
     assert response.status_code == 303
+
+
+def test_short_item_aliases_are_mapped_and_duplicate_membership_is_kept(monkeypatch, tmp_path):
+    run = _create_run(monkeypatch, tmp_path)
+    prompt = build_category_integration_prompt(run["run_id"], "causal_conditions")
+    source_ids = [item["source_item_id"] for item in prompt["source_items"]]
+    markdown = """```markdown
+COMPONENT SYNTHESIS RESULT
+INTEGRATED CATEGORIES
+CATEGORY: category_a
+- title: مقولهٔ نخست
+- definition: تعریف نخست
+- items:
+  - ITEM_1
+  - ITEM_2
+CATEGORY: category_b
+- title: مقولهٔ دوم
+- definition: تعریف دوم
+- items:
+  - ITEM_1
+CATEGORY: broken
+این بخش قالب نامعتبر دارد
+END OF RESULT
+```"""
+
+    result = submit_category_integration_output(
+        run["run_id"], "causal_conditions", markdown
+    )
+
+    assert result["status"] == "ready_for_researcher_review"
+    categories = result["output_json"]["integrated_categories"]
+    assert categories[0]["source_item_ids"] == source_ids
+    assert categories[1]["source_item_ids"] == [source_ids[0]]
+    assert result["validation_report_json"]["valid"] is True
 
 
 def test_sanitizer_repairs_missing_headings_and_truncates_duplicate_output(monkeypatch, tmp_path):
@@ -194,7 +230,7 @@ def test_researcher_split_preserves_source_coverage_and_uses_sequential_ids(monk
     assert sorted(item_id for category in categories for item_id in category["source_item_ids"]) == sorted(source_ids)
 
 
-def test_duplicate_unknown_ids_and_nonsequential_category_ids_fail_validation(monkeypatch, tmp_path):
+def test_duplicate_unknown_and_missing_items_are_reconciled_automatically(monkeypatch, tmp_path):
     run = _create_run(monkeypatch, tmp_path)
     component_key = "causal_conditions"
     prompt = build_category_integration_prompt(run["run_id"], component_key)
@@ -205,10 +241,14 @@ def test_duplicate_unknown_ids_and_nonsequential_category_ids_fail_validation(mo
         _valid_markdown(prompt, [source_ids[0], source_ids[0], "unknown-source-id"]),
     )
     report = invalid_coverage["validation_report_json"]
-    assert invalid_coverage["status"] == "invalid"
-    assert report["duplicate_source_item_count"] == 1
-    assert report["missing_source_item_count"] == 1
-    assert report["unknown_source_item_count"] == 1
+    assert invalid_coverage["status"] == "ready_for_researcher_review"
+    assert report["valid"] is True
+    assert report["missing_source_item_count"] == 0
+    assert report["unknown_source_item_count"] == 0
+    assert len(invalid_coverage["output_json"]["integrated_categories"]) == 2
+    assert invalid_coverage["output_json"]["integrated_categories"][1]["source_item_ids"] == [
+        source_ids[1]
+    ]
 
     nonsequential = _valid_markdown(prompt).replace(
         "CATEGORY: cat_1", "CATEGORY: cat_2"
@@ -216,11 +256,8 @@ def test_duplicate_unknown_ids_and_nonsequential_category_ids_fail_validation(mo
     invalid_categories = submit_category_integration_output(
         run["run_id"], component_key, nonsequential
     )
-    assert invalid_categories["status"] == "invalid"
-    assert any(
-        "شناسهٔ مقوله" in error
-        for error in invalid_categories["validation_report_json"]["errors"]
-    )
+    assert invalid_categories["status"] == "ready_for_researcher_review"
+    assert invalid_categories["output_json"]["integrated_categories"][0]["category_id"] == "cat_1"
 
 
 def test_duplicate_source_items_across_categories_are_accepted_with_warning(monkeypatch, tmp_path):
@@ -256,7 +293,7 @@ def test_duplicate_source_items_across_categories_are_accepted_with_warning(monk
     ]
     assert report["valid"] is True
     assert report["duplicate_source_item_count"] == 1
-    assert any("مانع پذیرش خروجی نیست" in warning for warning in report["warnings"])
+    assert report["errors"] == []
     review = TestClient(app).post(
         f"/synthesis/runs/{run['run_id']}/category-integration/review",
         json={
@@ -270,31 +307,33 @@ def test_duplicate_source_items_across_categories_are_accepted_with_warning(monk
     assert review.status_code == 200
 
 
-def test_valid_output_requires_researcher_approval_and_versions_are_preserved(monkeypatch, tmp_path):
+def test_missing_items_are_added_and_versions_are_preserved(monkeypatch, tmp_path):
     run = _create_run(monkeypatch, tmp_path)
     component_key = "causal_conditions"
     prompt = build_category_integration_prompt(run["run_id"], component_key)
     source_ids = [item["source_item_id"] for item in prompt["source_items"]]
-    invalid = submit_category_integration_output(
+    completed = submit_category_integration_output(
         run["run_id"],
         component_key,
         _valid_markdown(prompt, source_ids[:-1]),
     )
-    assert invalid["status"] == "invalid"
-    assert invalid["validation_report_json"]["missing_source_item_count"] == 1
+    assert completed["status"] == "ready_for_researcher_review"
+    assert completed["validation_report_json"]["missing_source_item_count"] == 0
 
     client = TestClient(app, follow_redirects=False)
-    invalid_response = client.post(
+    recovered_response = client.post(
         f"/synthesis/runs/{run['run_id']}/category-integration/results",
         data={
             "component_key": component_key,
             "raw_output_text": _valid_markdown(prompt, source_ids[:-1]),
         },
     )
-    assert invalid_response.headers["location"] == (
+    assert recovered_response.headers["location"] == (
         f"/synthesis/runs/{run['run_id']}/category-integration"
-        "?component_key=causal_conditions"
+        "?component_key=contextual_conditions&received=1"
     )
+    recovered_page = client.get(recovered_response.headers["location"])
+    assert "با موفقیت ثبت شد" in recovered_page.text
     response = client.post(
         f"/synthesis/runs/{run['run_id']}/category-integration/results",
         data={
@@ -308,7 +347,7 @@ def test_valid_output_requires_researcher_approval_and_versions_are_preserved(mo
         "?component_key=contextual_conditions&received=1"
     )
     next_page = client.get(response.headers["location"])
-    assert "خروجی هوش مصنوعی دریافت و معتبر شد" in next_page.text
+    assert "با موفقیت ثبت شد" in next_page.text
     assert "شرایط زمینه‌ای" in next_page.text
     latest = max(
         (

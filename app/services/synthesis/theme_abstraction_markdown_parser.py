@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from app.services.synthesis.component_markdown_sanitizer import (
-    unwrap_outer_markdown_code_fence,
+    sanitize_theme_abstraction_markdown,
 )
 
 
@@ -52,59 +52,11 @@ def _headings(text: str) -> list[Heading]:
     ]
 
 
-def _expect(headings: list[Heading], index: int, level: int, title: str) -> int:
-    if index >= len(headings) or (headings[index].level, headings[index].title) != (level, title):
-        actual = headings[index].title if index < len(headings) else "پایان سند"
-        raise ThemeAbstractionMarkdownError([
-            f"ترتیب Heading نامعتبر است؛ انتظار `{('#' * level)} {title}` و دریافت `{actual}`."
-        ])
-    return index + 1
-
-
 def _empty(body: str, context: str) -> None:
     if body.strip() not in {"", "NONE", "- NONE"}:
         raise ThemeAbstractionMarkdownError([
             f"{context}: بخش خالی باید بدون متن یا با مقدار NONE باشد."
         ])
-
-
-def _parse_component_themes(headings: list[Heading]) -> dict[str, Any]:
-    _empty(headings[0].body, "عنوان اصلی")
-    index = _expect(headings, 1, 2, "METADATA")
-    metadata = _fields(
-        headings[index - 1].body,
-        context="METADATA",
-        list_fields=set(),
-        order=("run_id", "component_key", "input_hash"),
-    )
-    index = _expect(headings, index, 2, "THEMES")
-    _empty(headings[index - 1].body, "THEMES")
-    themes = []
-    while index < len(headings) and headings[index].level == 3 and headings[index].title.startswith("THEME: "):
-        node = headings[index]
-        theme = _fields(
-            node.body,
-            context=node.title,
-            list_fields={"integrated_category_ids"},
-            order=("theme_id", "title", "definition", "integrated_category_ids"),
-        )
-        theme["_heading_id"] = node.title.removeprefix("THEME: ").strip()
-        themes.append(theme)
-        index += 1
-    index = _expect(headings, index, 2, "END OF RESULT")
-    _empty(headings[index - 1].body, "END OF RESULT")
-    if index != len(headings):
-        raise ThemeAbstractionMarkdownError([
-            "پس از END OF RESULT هیچ Heading دیگری مجاز نیست."
-        ])
-    return {
-        "_contract": "component_themes_v1",
-        "metadata": metadata,
-        "themes": themes,
-        "categories_without_a_theme": [],
-        "quality_audit": {},
-    }
-
 
 def _fields(
     body: str,
@@ -130,11 +82,15 @@ def _fields(
         if key in values:
             errors.append(f"{context}: فیلد تکراری `{key}`.")
         is_list = key in list_fields
+        entries: list[str] = []
         if is_list and initial not in {"", "NONE"}:
-            errors.append(f"{context}: فهرست `{key}` باید با Bullet List ارائه شود.")
+            entries.extend(
+                item.strip()
+                for item in re.split(r"[,،]\s*|\s+", initial)
+                if item.strip()
+            )
         if not is_list and initial == "NONE":
             errors.append(f"{context}: مقدار NONE برای فیلد متنی `{key}` مجاز نیست.")
-        entries: list[str] = []
         text_lines = [initial] if initial and not is_list else []
         index += 1
         while index < len(lines) and not FIELD_RE.match(lines[index]):
@@ -158,7 +114,7 @@ def _fields(
             values[key] = entries
         else:
             values[key] = "\n".join(text_lines).strip()
-    if tuple(values) != order:
+    if order and tuple(values) != order:
         errors.append(f"{context}: ترتیب فیلدها باید دقیقاً {', '.join(order)} باشد.")
     if errors:
         raise ThemeAbstractionMarkdownError(errors)
@@ -168,83 +124,55 @@ def _fields(
 def parse_theme_abstraction_markdown(text: str) -> dict[str, Any]:
     if not isinstance(text, str) or not text.strip():
         raise ThemeAbstractionMarkdownError(["سند Markdown خالی است."])
-    text = unwrap_outer_markdown_code_fence(text)
+    text = sanitize_theme_abstraction_markdown(text)
     headings = _headings(text)
-    if headings[0].title == "COMPONENT THEMES RESULT":
-        return _parse_component_themes(headings)
     _empty(headings[0].body, "عنوان اصلی")
-
-    index = _expect(headings, 1, 2, "METADATA")
-    metadata = _fields(
-        headings[index - 1].body,
-        context="METADATA",
-        list_fields=set(),
-        order=("run_id", "component_key", "input_hash", "source_phase_version"),
-    )
-    index = _expect(headings, index, 2, "THEMES")
-    _empty(headings[index - 1].body, "THEMES")
-    themes = []
-    while index < len(headings) and headings[index].level == 3 and headings[index].title.startswith("THEME: "):
-        node = headings[index]
-        theme = _fields(
-            node.body,
-            context=node.title,
-            list_fields={"integrated_category_ids", "source_item_ids"},
-            order=(
-                "theme_id",
-                "theme_type",
-                "title",
-                "definition",
-                "rationale",
-                "abstraction_level",
-                "preserved_dimensions",
-                "integrated_category_ids",
-                "source_item_ids",
-            ),
-        )
-        theme["_heading_id"] = node.title.removeprefix("THEME: ").strip()
-        themes.append(theme)
-        index += 1
-
-    index = _expect(headings, index, 2, "CATEGORIES WITHOUT A THEME")
-    _empty(headings[index - 1].body, "CATEGORIES WITHOUT A THEME")
-    unthemed = []
-    while index < len(headings) and headings[index].level == 3 and headings[index].title.startswith("CATEGORY: "):
-        node = headings[index]
-        category = _fields(
-            node.body,
-            context=node.title,
-            list_fields={"source_item_ids"},
-            order=("integrated_category_id", "source_item_ids", "reason"),
-        )
-        category["_heading_id"] = node.title.removeprefix("CATEGORY: ").strip()
-        unthemed.append(category)
-        index += 1
-
-    index = _expect(headings, index, 2, "QUALITY AUDIT")
-    quality = _fields(
-        headings[index - 1].body,
-        context="QUALITY AUDIT",
-        list_fields={"warnings"},
-        order=(
-            "total_input_categories",
-            "total_assigned_categories",
-            "duplicate_category_ids",
-            "missing_category_ids",
-            "unknown_category_ids",
-            "status",
-            "warnings",
+    section_index = next(
+        (
+            index for index, heading in enumerate(headings)
+            if heading.level == 2 and heading.title == "THEMES"
         ),
+        None,
     )
-    index = _expect(headings, index, 2, "END OF RESULT")
-    _empty(headings[index - 1].body, "END OF RESULT")
-    if index != len(headings):
-        raise ThemeAbstractionMarkdownError([
-            "پس از END OF RESULT هیچ Heading دیگری مجاز نیست."
-        ])
+    if section_index is None:
+        raise ThemeAbstractionMarkdownError(["بخش THEMES پیدا نشد."])
+
+    themes = []
+    for node in headings[section_index + 1:]:
+        if node.level <= 2:
+            break
+        if node.level != 3 or not node.title.startswith("THEME: "):
+            continue
+        try:
+            theme = _fields(
+                node.body,
+                context=node.title,
+                list_fields={
+                    "integrated_category_ids",
+                    "source_category_ids",
+                    "category_ids",
+                    "items",
+                    "item_ids",
+                    "source_item_ids",
+                },
+                order=(),
+            )
+        except ThemeAbstractionMarkdownError:
+            continue
+        theme_id = node.title.removeprefix("THEME: ").strip()
+        theme["theme_id"] = theme.get("theme_id") or theme_id
+        theme["_heading_id"] = theme_id
+        theme["integrated_category_ids"] = (
+            theme.get("items")
+            or theme.get("item_ids")
+            or theme.get("integrated_category_ids")
+            or theme.get("source_category_ids")
+            or theme.get("category_ids")
+            or theme.get("source_item_ids")
+            or []
+        )
+        themes.append(theme)
     return {
-        "metadata": metadata,
         "themes": themes,
-        "categories_without_a_theme": unthemed,
-        "quality_audit": quality,
+        "categories_without_a_theme": [],
     }

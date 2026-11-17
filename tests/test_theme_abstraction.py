@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from copy import deepcopy
+import re
 
 import pytest
 from fastapi.testclient import TestClient
@@ -21,6 +22,7 @@ from app.services.synthesis.theme_abstraction_service import (
     STAGE_KEY,
     build_theme_abstraction_prompt,
     get_approved_theme_abstractions,
+    get_registered_theme_abstractions,
     submit_theme_abstraction_output,
     theme_abstraction_page_data,
 )
@@ -240,10 +242,14 @@ def test_prompt_uses_current_system_validated_categories_from_same_component(mon
     assert prompt["source_phase_version"] > 0
     assert len(prompt["source_categories"]) == 2
     assert "مقولهٔ تأییدشدهٔ 1" in prompt["prompt_text"]
-    assert "category_id: cat_1" in prompt["prompt_text"]
+    assert "item_id: ITEM_1" in prompt["prompt_text"]
+    assert "category_id: cat_1" not in prompt["prompt_text"]
+    assert "source_item_ids" not in prompt["prompt_text"]
+    assert "METADATA" not in prompt["prompt_text"]
+    assert "QUALITY AUDIT" not in prompt["prompt_text"]
+    assert "input_hash" not in prompt["prompt_text"]
     assert "مقولهٔ زمینه‌ای" not in prompt["prompt_text"]
     assert "source_origins_json" not in prompt["prompt_text"]
-    assert "source_item_ids" not in prompt["prompt_text"]
     assert "عبارت شاهد واقعی" not in prompt["prompt_text"]
     contextual_theme_prompt = build_theme_abstraction_prompt(
         run["run_id"], "contextual_conditions"
@@ -277,6 +283,35 @@ def test_component_themes_contract_reconstructs_internal_lineage(monkeypatch, tm
     assert theme["source_origins"]
 
 
+def test_short_item_aliases_map_to_categories_and_missing_category_becomes_standalone(monkeypatch, tmp_path):
+    run = _create_run(monkeypatch, tmp_path)
+    _submit_categories(run["run_id"])
+    prompt = build_theme_abstraction_prompt(run["run_id"], "causal_conditions")
+    markdown = """```markdown
+COMPONENT THEMES RESULT
+THEMES
+THEME: shared_theme
+- title: تم مشترک
+- definition: تعریف مبتنی بر داده
+- items:
+  - ITEM_1
+THEME: broken
+این بخش قالب نامعتبر دارد
+END OF RESULT
+```"""
+
+    result = submit_theme_abstraction_output(
+        run["run_id"], "causal_conditions", markdown
+    )
+
+    assert result["status"] == "ready_for_researcher_review"
+    themes = result["output_json"]["themes"]
+    assert themes[0]["integrated_category_ids"] == ["cat_1"]
+    assert themes[1]["integrated_category_ids"] == ["cat_2"]
+    assert themes[1]["theme_type"] == "standalone"
+    assert result["validation_report_json"]["valid"] is True
+
+
 def test_component_themes_empty_component_accepts_none(monkeypatch, tmp_path):
     run = _create_run(monkeypatch, tmp_path)
     category_prompt = build_category_integration_prompt(run["run_id"], "contextual_conditions")
@@ -291,6 +326,56 @@ def test_component_themes_empty_component_accepts_none(monkeypatch, tmp_path):
 
     assert submitted["status"] == "ready_for_researcher_review"
     assert submitted["output_json"]["themes"] == []
+
+
+def test_component_themes_sanitizer_repairs_unheaded_fenced_markdown(monkeypatch, tmp_path):
+    run = _create_run(monkeypatch, tmp_path)
+    _submit_categories(run["run_id"])
+    prompt = build_theme_abstraction_prompt(run["run_id"], "causal_conditions")
+    markdown = _component_themes_markdown(prompt)
+    markdown = markdown.removeprefix("```markdown\n").removesuffix("\n```")
+    markdown = re.sub(r"^#{1,6}\s*", "", markdown, flags=re.MULTILINE)
+
+    submitted = submit_theme_abstraction_output(
+        run["run_id"],
+        "causal_conditions",
+        f"```markdown\n{markdown}\n```",
+    )
+
+    assert submitted["validation_report_json"]["valid"] is True, submitted["validation_report_json"]
+    assert submitted["raw_output_text"].startswith("# COMPONENT THEMES RESULT")
+    page_data = theme_abstraction_page_data(run["run_id"], "causal_conditions")
+    assert page_data["components"][0]["registered_theme"] is not None
+
+
+def test_stage_four_continues_without_approvals_and_skips_empty_components(monkeypatch, tmp_path):
+    run = _create_run(monkeypatch, tmp_path)
+    for component_key in COMPONENT_LABELS:
+        category_prompt = build_category_integration_prompt(run["run_id"], component_key)
+        submit_category_integration_output(
+            run["run_id"],
+            component_key,
+            _category_output(category_prompt),
+        )
+        theme_prompt = build_theme_abstraction_prompt(run["run_id"], component_key)
+        if theme_prompt["source_categories"]:
+            submit_theme_abstraction_output(
+                run["run_id"],
+                component_key,
+                _component_themes_markdown(theme_prompt),
+            )
+
+    themes = get_registered_theme_abstractions(run["run_id"])
+    assert set(themes) == set(COMPONENT_LABELS)
+    assert themes["contextual_conditions"]["no_data"] is True
+    page_data = theme_abstraction_page_data(run["run_id"], "causal_conditions")
+    assert page_data["stage_four_complete"] is True
+    assert page_data["components"][1]["category_library"]["integrated_categories"] == []
+    from app.services.synthesis.final_synthesis_inputs import _approved_stage_four
+
+    phase_five = _approved_stage_four(run["run_id"])
+    assert phase_five is not None
+    assert phase_five[2]["result"]["stage_key"] == STAGE_KEY
 
 
 def test_component_themes_contract_feeds_approved_stage_five_library(monkeypatch, tmp_path):
@@ -504,14 +589,15 @@ def test_unthemed_categories_can_be_approved_without_changing_stage_three(monkey
         _theme_markdown(prompt, assign_all=False),
     )
     assert submitted["status"] == "ready_for_researcher_review"
-
-    for category in submitted["output_json"]["categories_without_a_theme"]:
+    assert submitted["output_json"]["categories_without_a_theme"] == []
+    assert len(submitted["output_json"]["themes"]) == 2
+    for theme in submitted["output_json"]["themes"]:
         record_theme_abstraction_review_decision(
             run["run_id"],
             component_key="causal_conditions",
-            decision="approve_unthemed",
-            integrated_category_id=category["integrated_category_id"],
-            reason="فاقد تم مستقل باقی می‌ماند.",
+            decision="approve_theme",
+            theme_id=theme["theme_id"],
+            reason="تم مستقلِ مقولهٔ جاافتاده تأیید شد.",
         )
     final = record_theme_abstraction_review_decision(
         run["run_id"],
@@ -520,8 +606,8 @@ def test_unthemed_categories_can_be_approved_without_changing_stage_three(monkey
         reason="تأیید نهایی کتابخانه",
     )
     library = get_approved_theme_abstractions(run["run_id"])["causal_conditions"]
-    assert library["themes"] == []
-    assert len(library["categories_without_a_theme"]) == 2
+    assert len(library["themes"]) == 2
+    assert library["categories_without_a_theme"] == []
     assert library["source_phase_version"] == stage3_approved["version"]
     stage3_history_after = [
         (result["version"], result["status"], result["approval_status"])
@@ -564,7 +650,7 @@ def test_reviewer_membership_change_recomputes_theme_type_and_lineage(monkeypatc
     assert unresolved["source_item_ids"] == categories_by_id[category_ids[0]]["source_item_ids"]
 
 
-def test_duplicate_missing_and_unknown_category_ids_fail_audit(monkeypatch, tmp_path):
+def test_duplicate_unknown_and_missing_category_ids_are_reconciled(monkeypatch, tmp_path):
     run = _create_run(monkeypatch, tmp_path)
     _submit_categories(run["run_id"])
     prompt = build_theme_abstraction_prompt(run["run_id"], "causal_conditions")
@@ -576,10 +662,12 @@ def test_duplicate_missing_and_unknown_category_ids_fail_audit(monkeypatch, tmp_
         run["run_id"], "causal_conditions", malformed
     )
     report = result["validation_report_json"]
-    assert result["status"] == "invalid"
+    assert result["status"] == "ready_for_researcher_review"
+    assert report["valid"] is True
     assert report["duplicate_category_count"] == 1
-    assert report["missing_category_count"] == 1
-    assert report["unknown_category_count"] == 1
+    assert report["missing_category_count"] == 0
+    assert report["unknown_category_count"] == 0
+    assert len(result["output_json"]["themes"]) == 2
 
 
 def test_empty_approved_component_accepts_empty_theme_result(monkeypatch, tmp_path):
@@ -625,7 +713,7 @@ def test_single_category_is_a_standalone_theme_with_lineage(monkeypatch, tmp_pat
     assert theme["source_origins"] == category["source_origins"]
 
 
-def test_theme_source_lineage_must_match_member_categories(monkeypatch, tmp_path):
+def test_theme_source_lineage_is_reconstructed_from_backend_mapping(monkeypatch, tmp_path):
     run = _create_run(monkeypatch, tmp_path)
     _submit_categories(run["run_id"])
     prompt = build_theme_abstraction_prompt(run["run_id"], "causal_conditions")
@@ -640,11 +728,15 @@ def test_theme_source_lineage_must_match_member_categories(monkeypatch, tmp_path
         run["run_id"], "causal_conditions", malformed
     )
 
-    assert result["status"] == "invalid"
-    assert any(
-        "Source Itemهای تم" in error
-        for error in result["validation_report_json"]["errors"]
-    )
+    assert result["status"] == "ready_for_researcher_review"
+    theme = result["output_json"]["themes"][0]
+    assert theme["source_item_ids"] == sorted({
+        source_item_id
+        for category_id in theme["integrated_category_ids"]
+        for category in prompt["source_categories"]
+        if category["integrated_category_id"] == category_id
+        for source_item_id in category["source_item_ids"]
+    })
 
 
 def test_evidence_warning_preserves_lineage_without_blocking_stage_four(monkeypatch, tmp_path):
@@ -675,6 +767,12 @@ def test_evidence_warning_preserves_lineage_without_blocking_stage_four(monkeypa
 
     assert result["status"] == "ready_for_researcher_review"
     assert result["output_json"]["inherited_warnings"][0]["issue_type"] == "quote_not_in_snapshot"
+    page = TestClient(app).get(
+        f"/synthesis/runs/{run['run_id']}/theme-abstraction",
+        params={"component_key": "causal_conditions"},
+    )
+    assert "quote_not_in_snapshot" not in page.text
+    assert "هشدارهای شواهد موروثی" not in page.text
     origins = result["output_json"]["themes"][0]["source_origins"]
     assert any(origin["evidence_warnings"] for origin in origins)
     pool["validation_report"]["errors"].append({"issue_type": "missing_evidence_reference"})
@@ -704,7 +802,7 @@ def test_all_stage_three_outputs_can_feed_stage_four_without_provider_api(monkey
 
 
 @pytest.mark.parametrize("field", ["abstraction_level", "preserved_dimensions"])
-def test_theme_semantic_fields_are_required(monkeypatch, tmp_path, field):
+def test_theme_semantic_fields_are_not_required_in_compact_output(monkeypatch, tmp_path, field):
     run = _create_run(monkeypatch, tmp_path)
     _submit_categories(run["run_id"])
     prompt = build_theme_abstraction_prompt(run["run_id"], "causal_conditions")
@@ -713,7 +811,7 @@ def test_theme_semantic_fields_are_required(monkeypatch, tmp_path, field):
         if not line.startswith(f"- {field}:")
     )
     result = submit_theme_abstraction_output(run["run_id"], "causal_conditions", markdown)
-    assert result["status"] == "invalid"
+    assert result["status"] == "ready_for_researcher_review"
 
 
 def test_stage_three_edit_invalidates_only_matching_theme_component(monkeypatch, tmp_path):
@@ -762,12 +860,14 @@ def test_theme_abstraction_routes_render_and_accept_markdown(monkeypatch, tmp_pa
     )
     assert page.status_code == 200
     assert "مرحله ۴" in page.text
+    assert "در حال ثبت خروجی برای بخش: شرایط علّی" in page.text
+    assert "quote_not_in_snapshot" not in page.text
     download = client.get(
         f"/synthesis/runs/{run['run_id']}/theme-abstraction/prompt.md",
         params={"component_key": "causal_conditions"},
     )
     assert download.status_code == 200
-    assert "# THEME ABSTRACTION RESULT" in download.text
+    assert "# COMPONENT THEMES RESULT" in download.text
     response = client.post(
         f"/synthesis/runs/{run['run_id']}/theme-abstraction/results",
         data={
@@ -776,8 +876,18 @@ def test_theme_abstraction_routes_render_and_accept_markdown(monkeypatch, tmp_pa
         },
     )
     assert response.status_code == 303
-    assert "component_key=contextual_conditions" in response.headers["location"]
+    assert "component_key=causal_conditions" in response.headers["location"]
     assert "received=causal_conditions" in response.headers["location"]
+    next_page = client.get(response.headers["location"])
+    assert "ادامه به مرحله ۵: ترسیم و تدوین مدل نهایی نظریه داده‌بنیاد" in next_page.text
+    assert "ثبت شد ✓" in next_page.text
+    navigation = re.search(
+        r'<nav class="component-step-list">(.*?)</nav>',
+        next_page.text,
+        flags=re.DOTALL,
+    )
+    assert navigation is not None
+    assert "ready_for_researcher_review" not in navigation.group(1)
 
 
 def test_fifth_stage_four_approval_enters_six_step_workflow(monkeypatch, tmp_path):

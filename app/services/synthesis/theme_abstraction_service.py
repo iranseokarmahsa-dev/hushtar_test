@@ -15,6 +15,9 @@ from app.services.synthesis.category_integration_service import (
     get_registered_category_integrations,
 )
 from app.services.synthesis.category_grouping_service import _approved_pool
+from app.services.synthesis.component_markdown_sanitizer import (
+    sanitize_theme_abstraction_markdown,
+)
 from app.services.synthesis.normalization_service import stable_hash
 from app.services.synthesis.reference_mapper import POOL_COMPONENT_KEYS
 from app.services.synthesis.theme_abstraction_markdown_parser import (
@@ -26,14 +29,15 @@ STAGE_KEY = "theme_abstraction"
 PROMPT_PATH = Path(__file__).resolve().parents[3] / "prompts" / "synthesis" / "theme_abstraction.txt"
 
 
-def _text_block(value: Any) -> str:
+def _text_block(value: Any, *, indentation: int = 2) -> str:
     text = "" if value is None else str(value)
+    prefix = " " * indentation
     if not text:
-        return "  NONE"
+        return f"{prefix}NONE"
     fence_length = max(3, max((len(run) for run in re.findall(r"~+", text)), default=0) + 1)
     fence = "~" * fence_length
-    content = "\n".join(f"  {line}" for line in text.splitlines())
-    return f"  {fence}text\n{content}\n  {fence}"
+    content = "\n".join(f"{prefix}{line}" for line in text.splitlines())
+    return f"{prefix}{fence}text\n{content}\n{prefix}{fence}"
 
 
 def build_theme_abstraction_prompt(run_id: str, component_key: str) -> dict[str, Any]:
@@ -112,11 +116,16 @@ def build_theme_abstraction_prompt(run_id: str, component_key: str) -> dict[str,
         "categories": categories,
         "prompt_template": template,
     })
+    category_id_map = {
+        f"ITEM_{index}": category["integrated_category_id"]
+        for index, category in enumerate(categories, start=1)
+    }
     category_lines = []
-    for category in categories:
+    for index, category in enumerate(categories, start=1):
+        item_alias = f"ITEM_{index}"
         category_lines.extend([
-            f"### CATEGORY: {category['integrated_category_id']}",
-            f"- category_id: {category['integrated_category_id']}",
+            f"### INPUT ITEM: {item_alias}",
+            f"- item_id: {item_alias}",
             "- title:",
             _text_block(category["title"]),
             "- definition:",
@@ -124,14 +133,11 @@ def build_theme_abstraction_prompt(run_id: str, component_key: str) -> dict[str,
             "",
         ])
     substitutions = {
-        "COMPONENT_KEY": component_key,
         "COMPONENT_LABEL": COMPONENT_LABELS[component_key],
-        "RUN_ID": run_id,
-        "INPUT_HASH": input_hash,
         "CATEGORIES": "\n".join(category_lines).strip() or "NONE",
     }
     prompt_text = re.sub(
-        r"\{\{(COMPONENT_KEY|COMPONENT_LABEL|RUN_ID|INPUT_HASH|CATEGORIES)\}\}",
+        r"\{\{(COMPONENT_LABEL|CATEGORIES)\}\}",
         lambda match: substitutions[match.group(1)],
         template,
     )
@@ -144,6 +150,7 @@ def build_theme_abstraction_prompt(run_id: str, component_key: str) -> dict[str,
         "source_phase_version": source_phase_version,
         "source_stage_result_id": registered["stage_result_id"],
         "source_categories": categories,
+        "category_id_map": category_id_map,
         "inherited_warnings": list(evidence_warnings.values()),
         "source_stage_result_id": registered["stage_result_id"],
         "prompt_text": prompt_text,
@@ -411,16 +418,18 @@ def next_theme_abstraction_component(
     if component_key not in POOL_COMPONENT_KEYS:
         return None
     available = get_registered_category_integrations(run_id)
-    approved = _latest_approved_results(run_id)
+    completed = get_registered_theme_abstractions(run_id)
+    approved = _latest_approved_results(run_id) if only_unapproved else {}
     start_index = POOL_COMPONENT_KEYS.index(component_key)
     for offset in range(1, len(POOL_COMPONENT_KEYS) + 1):
         candidate = POOL_COMPONENT_KEYS[(start_index + offset) % len(POOL_COMPONENT_KEYS)]
-        if candidate not in available:
+        library = available.get(candidate)
+        if not library or not library["integrated_categories"] or candidate in completed:
             continue
-        if only_unapproved and candidate in approved:
+        if candidate in approved:
             continue
         return candidate
-    return None
+    return component_key
 
 
 def _validation_text(report: dict[str, Any]) -> str:
@@ -436,17 +445,112 @@ def submit_theme_abstraction_output(
     raw_output_text: str,
 ) -> dict[str, Any]:
     prompt = build_theme_abstraction_prompt(run_id, component_key)
+    sanitized_output_text = raw_output_text
     parsed = None
     try:
         parsed = parse_theme_abstraction_markdown(raw_output_text)
-        report = validate_theme_abstraction_result(
-            parsed,
-            run_id=run_id,
-            component_key=component_key,
-            input_hash=prompt["input_hash"],
-            source_phase_version=prompt["source_phase_version"],
-            source_categories=prompt["source_categories"],
-        )
+        sanitized_output_text = sanitize_theme_abstraction_markdown(raw_output_text)
+        categories_by_id = {
+            str(category["integrated_category_id"]): category
+            for category in prompt["source_categories"]
+        }
+        category_id_map = prompt["category_id_map"]
+        id_map = {
+            **category_id_map,
+            **{category_id: category_id for category_id in categories_by_id},
+        }
+        themes = []
+        seen_category_ids: set[str] = set()
+        duplicate_count = 0
+        for item in parsed.get("themes", []):
+            raw_ids = item.get("integrated_category_ids") or []
+            category_ids = [
+                id_map[str(category_id).strip()]
+                for category_id in raw_ids
+                if str(category_id).strip() in id_map
+            ]
+            if not category_ids:
+                continue
+            duplicate_count += len(category_ids) - len(set(category_ids))
+            category_ids = list(dict.fromkeys(category_ids))
+            first_category = categories_by_id[category_ids[0]]
+            title = str(item.get("title") or "").strip() or first_category["title"]
+            definition = (
+                str(item.get("definition") or "").strip()
+                or first_category["definition"]
+            )
+            source_item_ids, source_origins = _lineage_for_category_ids(
+                prompt["source_categories"],
+                category_ids,
+            )
+            themes.append({
+                "theme_id": f"theme_{len(themes) + 1}",
+                "theme_type": "standalone" if len(category_ids) == 1 else "shared",
+                "title": title,
+                "definition": definition,
+                "rationale": "",
+                "abstraction_level": "",
+                "preserved_dimensions": "",
+                "integrated_category_ids": category_ids,
+                "source_item_ids": source_item_ids,
+                "source_origins": source_origins,
+                "review_status": "pending",
+            })
+            seen_category_ids.update(category_ids)
+
+        missing_category_ids = [
+            str(category["integrated_category_id"])
+            for category in prompt["source_categories"]
+            if str(category["integrated_category_id"]) not in seen_category_ids
+        ]
+        for category_id in missing_category_ids:
+            category = categories_by_id[category_id]
+            source_item_ids, source_origins = _lineage_for_category_ids(
+                prompt["source_categories"],
+                [category_id],
+            )
+            themes.append({
+                "theme_id": f"theme_{len(themes) + 1}",
+                "theme_type": "standalone",
+                "title": category["title"],
+                "definition": category["definition"],
+                "rationale": "",
+                "abstraction_level": "",
+                "preserved_dimensions": "",
+                "integrated_category_ids": [category_id],
+                "source_item_ids": source_item_ids,
+                "source_origins": source_origins,
+                "review_status": "pending",
+            })
+
+        parsed = {
+            "metadata": {
+                "run_id": run_id,
+                "component_key": component_key,
+                "input_hash": prompt["input_hash"],
+            },
+            "source_stage_result_id": prompt["source_stage_result_id"],
+            "inherited_warnings": prompt["inherited_warnings"],
+            "system_validation_status": "system_validated",
+            "researcher_review_status": "pending_researcher_review",
+            "themes": themes,
+            "categories_without_a_theme": [],
+        }
+        report = {
+            "valid": True,
+            "errors": [],
+            "warnings": (
+                [f"{len(missing_category_ids)} مقولهٔ جاافتاده به‌صورت تم مستقل افزوده شد."]
+                if missing_category_ids else []
+            ),
+            "checked_category_count": len(prompt["source_categories"]),
+            "assigned_category_count": sum(
+                len(theme["integrated_category_ids"]) for theme in themes
+            ),
+            "duplicate_category_count": duplicate_count,
+            "missing_category_count": 0,
+            "unknown_category_count": 0,
+        }
     except ThemeAbstractionMarkdownError as error:
         report = {
             "valid": False,
@@ -458,29 +562,6 @@ def submit_theme_abstraction_output(
             "missing_category_count": len(prompt["source_categories"]),
             "unknown_category_count": 0,
         }
-    if parsed is not None and report["valid"]:
-        parsed["source_stage_result_id"] = prompt["source_stage_result_id"]
-        parsed["inherited_warnings"] = prompt["inherited_warnings"]
-        parsed["system_validation_status"] = "system_validated"
-        parsed["researcher_review_status"] = "pending_researcher_review"
-        for theme in parsed["themes"]:
-            source_item_ids, source_origins = _lineage_for_category_ids(
-                prompt["source_categories"],
-                theme["integrated_category_ids"],
-            )
-            theme["source_item_ids"] = source_item_ids
-            theme["source_origins"] = source_origins
-            theme.setdefault("theme_type", "standalone" if len(theme["integrated_category_ids"]) == 1 else "shared")
-            theme.setdefault("rationale", "")
-            theme.setdefault("abstraction_level", "")
-            theme.setdefault("preserved_dimensions", "")
-            theme["review_status"] = "pending"
-        for category in parsed["categories_without_a_theme"]:
-            category["source_origins"] = _lineage_for_category_ids(
-                prompt["source_categories"],
-                [category["integrated_category_id"]],
-            )[1]
-            category["review_status"] = "pending"
     version = get_next_stage_version(run_id, STAGE_KEY, component_key)
     return save_stage_result(
         run_id,
@@ -490,7 +571,7 @@ def submit_theme_abstraction_output(
         status="ready_for_researcher_review" if report["valid"] else "invalid",
         input_hash=prompt["input_hash"],
         prompt_text=prompt["prompt_text"],
-        raw_output_text=raw_output_text,
+        raw_output_text=sanitized_output_text,
         output_json=parsed if parsed is not None else {},
         validation_report_json=report,
         validation_report_text=_validation_text(report),
@@ -512,7 +593,12 @@ def theme_abstraction_page_data(run_id: str, component_key: str) -> dict[str, An
         if result["stage_key"] == STAGE_KEY and result["component_key"] == component_key
     ]
     registered_library = get_registered_category_integrations(run_id)
-    approved_theme_libraries = get_approved_theme_abstractions(run_id)
+    registered_theme_libraries = get_registered_theme_abstractions(run_id)
+    complete_components = {
+        key for key in registered_library
+        if not registered_library[key]["integrated_categories"]
+        or key in registered_theme_libraries
+    }
     component_rows = [
         {
             "key": key,
@@ -520,6 +606,7 @@ def theme_abstraction_page_data(run_id: str, component_key: str) -> dict[str, An
             "category_library": registered_library.get(key),
             "latest": latest_results.get(key),
             "approved_result": approved_results.get(key),
+            "registered_theme": registered_theme_libraries.get(key),
         }
         for key in POOL_COMPONENT_KEYS
     ]
@@ -549,8 +636,66 @@ def theme_abstraction_page_data(run_id: str, component_key: str) -> dict[str, An
         "latest": latest,
         "history": history,
         "categories_by_id": categories_by_id,
-        "all_theme_libraries_approved": set(approved_theme_libraries) == set(POOL_COMPONENT_KEYS),
+        "stage_four_complete": (
+            set(registered_library) == set(POOL_COMPONENT_KEYS)
+            and complete_components == set(registered_library)
+        ),
     }
+
+
+def get_registered_theme_abstractions(run_id: str) -> dict[str, dict[str, Any]]:
+    """Return current valid stage-four outputs without requiring researcher approval."""
+    category_libraries = get_registered_category_integrations(run_id)
+    latest_results = _latest_results(run_id)
+    result: dict[str, dict[str, Any]] = {}
+    for component_key in POOL_COMPONENT_KEYS:
+        category_library = category_libraries.get(component_key)
+        if category_library is None:
+            continue
+        prompt = build_theme_abstraction_prompt(run_id, component_key)
+        theme_result = latest_results.get(component_key)
+        if not category_library["integrated_categories"]:
+            output = (theme_result or {}).get("output_json") or {}
+            result[component_key] = {
+                "component_key": component_key,
+                "stage_result_id": theme_result.get("stage_result_id") if theme_result else None,
+                "version": theme_result.get("version") if theme_result else None,
+                "input_hash": prompt["input_hash"],
+                "source_phase_version": category_library["version"],
+                "source_stage_result_id": category_library["stage_result_id"],
+                "source_categories": [],
+                "integrated_category_ids": [],
+                "themes": output.get("themes", []),
+                "categories_without_a_theme": output.get("categories_without_a_theme", []),
+                "no_data": True,
+            }
+            continue
+        if (
+            theme_result is None
+            or theme_result.get("status") not in {"ready_for_researcher_review", "approved"}
+            or theme_result.get("approval_status") not in {"pending", "approved"}
+            or not (theme_result.get("validation_report_json") or {}).get("valid")
+            or theme_result.get("input_hash") != prompt["input_hash"]
+        ):
+            continue
+        output = theme_result.get("output_json") or {}
+        result[component_key] = {
+            "component_key": component_key,
+            "stage_result_id": theme_result["stage_result_id"],
+            "version": theme_result["version"],
+            "input_hash": theme_result["input_hash"],
+            "source_phase_version": theme_result.get("source_phase_version"),
+            "source_stage_result_id": output.get("source_stage_result_id"),
+            "source_categories": category_library["integrated_categories"],
+            "integrated_category_ids": [
+                category["category_id"]
+                for category in category_library["integrated_categories"]
+            ],
+            "themes": output.get("themes", []),
+            "categories_without_a_theme": output.get("categories_without_a_theme", []),
+            "no_data": False,
+        }
+    return result
 
 
 def get_approved_theme_abstractions(run_id: str) -> dict[str, dict[str, Any]]:

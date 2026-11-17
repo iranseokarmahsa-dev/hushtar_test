@@ -20,6 +20,51 @@
 	<details><summary>مدل، ممیزی و زنجیره ردیابی</summary><pre>{{ latest.output_json|tojson(indent=2) }}</pre></details>
 </section>
 {% endif %}
+{% if latest and latest_is_current and latest.output_json.theoretical_storyline %}
+<section class="panel">
+	<h2>روایت نظری تبیین‌کنندهٔ مدل</h2>
+	<p style="white-space: pre-line">{{ latest.output_json.theoretical_storyline }}</p>
+</section>
+{% endif %}
+{% if latest and latest_is_current and latest.output_json.core_phenomenon %}
+<section class="panel">
+	<h2>پدیده محوری تلفیقی</h2>
+	<h3>{{ latest.output_json.core_phenomenon.title }}</h3>
+	<p>{{ latest.output_json.core_phenomenon.definition }}</p>
+	<p><strong>مصاحبه‌های پشتیبان:</strong> {{ latest.output_json.core_phenomenon.supporting_interview_ids|join('، ') if latest.output_json.core_phenomenon.supporting_interview_ids else 'ثبت نشده' }}</p>
+	<h3>واگرایی‌ها و تفاوت‌ها</h3>
+	{% for divergence in latest.output_json.core_phenomenon.divergences %}
+	<article class="review-card"><strong>{{ divergence.description }}</strong><p>{{ divergence.reasoning }}</p></article>
+	{% else %}<p>واگرایی جدی ثبت‌شده‌ای گزارش نشده است.</p>{% endfor %}
+</section>
+{% endif %}
+{% if latest and latest_is_current %}
+<section class="panel">
+	<h2>جدول جامع تم‌های نهایی</h2>
+	{% for node in latest.output_json.nodes %}
+	{% if node.node_type in ['theme', 'independent_category'] %}
+	<article class="review-card">
+		<strong>{{ node.title }}</strong> · <code>{{ node.node_id }}</code>
+		<p>{{ node.component_key }} · {{ node.definition }}</p>
+		<p><strong>مقولات پشتیبان:</strong> {{ node.category_unit_ids|join('، ') if node.category_unit_ids else 'ثبت نشده' }}</p>
+		<p><strong>مصاحبه‌های پشتیبان:</strong> {{ node.source_project_ids|join('، ') if node.source_project_ids else 'ثبت نشده' }}</p>
+	</article>
+	{% endif %}
+	{% endfor %}
+</section>
+<section class="panel">
+	<h2>تم‌های مستقل</h2>
+	{% for theme in latest.output_json.isolated_themes %}
+	<article class="review-card">
+		<strong>{{ theme.title }}</strong> · <code>{{ theme.theme_id }}</code> · <span class="status-pill">{{ theme.status }}</span>
+		<p>{{ theme.definition }}</p>
+		<p>{{ theme.reason }}</p>
+		<p><strong>مقولات پشتیبان:</strong> {{ theme.supporting_category_ids|join('، ') if theme.supporting_category_ids else 'ثبت نشده' }}</p>
+		<p><strong>مصاحبه‌های پشتیبان:</strong> {{ theme.supporting_interview_ids|join('، ') if theme.supporting_interview_ids else 'ثبت نشده' }}</p>
+	</article>
+	{% else %}<p>تم مستقل فاقد رابطه ثبت نشده است.</p>{% endfor %}
+</section>
+{% endif %}
 {% if latest_is_current and diagram %}
 <header class="analysis-page-header paradigm-page-header">
 	<div><p class="eyebrow">نسخه {{ diagram.model_version }}</p><h2>نمودار مدل نهایی</h2><p class="lede">نودها و روابط از مدل تأییدشده ساخته شده‌اند؛ پیوندهای ساختاری صرفاً برای چیدمان هستند.</p></div>
@@ -32,6 +77,8 @@
 		<button class="button button-secondary" type="button" data-layout-reset>بازنشانی چیدمان</button>
 		<a class="button button-secondary" href="/synthesis/runs/{{ run_id }}/final-model/export/png">دریافت PNG</a>
 		<a class="button button-secondary" href="/synthesis/runs/{{ run_id }}/final-model/export/svg">دریافت SVG</a>
+		<a class="button button-secondary" href="/synthesis/runs/{{ run_id }}/final-model/export.xlsx">دانلود Excel چهارشیتی (.xlsx)</a>
+		<a class="button button-primary" href="/synthesis/runs/{{ run_id }}/final-model/export.docx">دانلود خروجی کامل Word (.docx)</a>
 		<button class="button button-secondary" type="button" data-print>چاپ / PDF</button>
 	</div>
 </header>
@@ -55,6 +102,26 @@
 							<small>{{ item.node_type }}</small>
 							<small class="diagram-ids">{{ item.id }}</small>
 						</button>
+						{% if item.integrated_categories %}
+						<details class="paradigm-node-lineage">
+							<summary>مقولات تلفیقی و منشأ</summary>
+							<ul>
+								{% for category in item.integrated_categories %}
+								<li>
+									<strong>{{ category.title }}</strong> · <code>{{ category.category_id }}</code>
+									<details>
+										<summary>مقولات اولیه و مفاهیم</summary>
+										<ul>{% for source_item in category.source_items %}
+											<li>{{ source_item.initial_category or 'مقولهٔ اولیه' }} · <code>{{ source_item.source_category_id }}</code>
+												<ul>{% for concept_id in source_item.concept_ids %}<li><code>{{ concept_id }}</code></li>{% endfor %}</ul>
+											</li>
+										{% endfor %}</ul>
+									</details>
+								</li>
+								{% endfor %}
+							</ul>
+						</details>
+						{% endif %}
 						{% else %}
 						<span class="paradigm-node-empty">نود تأییدشده‌ای در این مؤلفه ثبت نشده است.</span>
 						{% endfor %}
@@ -85,6 +152,10 @@
 			<summary><span class="entity-id">{{ relation.relationship_id }}</span><strong>{{ relation.source_title }} ← {{ relation.target_title }}</strong><span class="status-pill">{{ relation.relationship_type }}</span><span>{{ relation.description }}</span></summary>
 			<div class="paradigm-relationship-details">
 				<p>جهت: {{ relation.direction }} · استدلال: {{ relation.reasoning }}</p>
+				<p>سازوکار تحلیلی: {{ relation.analytical_mechanism or relation.reasoning }}</p>
+				<p>سطح شواهد: {{ relation.evidence_level or 'CONCEPTUAL_INFERENCE' }}</p>
+				<p>مصاحبه‌های پشتیبان: {{ relation.supporting_interview_ids|join('، ') if relation.supporting_interview_ids else 'ثبت نشده' }}</p>
+				<p>مقولات پشتیبان: {{ relation.supporting_category_unit_ids|join('، ') if relation.supporting_category_unit_ids else 'ثبت نشده' }}</p>
 				<p>روابط منبع: {{ relation.supporting_source_relationship_ids|join('، ') if relation.supporting_source_relationship_ids else 'ثبت نشده' }}</p>
 				{% for evidence in relation.evidence %}<blockquote>{{ evidence.paragraph_id }} «{{ evidence.exact_quote }}»<small>{{ evidence.interpretation }}</small></blockquote>{% else %}<p class="muted">برای این رابطه شاهدی ثبت نشده است.</p>{% endfor %}
 			</div>

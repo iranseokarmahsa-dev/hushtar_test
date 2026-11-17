@@ -9,6 +9,9 @@
 - source_phase_version: VERSION
 - phenomenon_version: VERSION
 
+## THEORETICAL STORYLINE
+روایت نظری تبیین‌کنندهٔ مدل بر اساس تم‌ها، پدیدهٔ محوری و روابط پیشنهادی
+
 ## RELATIONSHIPS
 
 ##### RELATIONSHIP: AI_RELATIONSHIP_001

@@ -259,6 +259,8 @@ def parse_relationship_markdown(text: str) -> dict[str, Any]:
             "source_phase_version", "phenomenon_version",
         ),
     )
+    storyline_heading, index = _section(headings, "THEORETICAL STORYLINE", start=index)
+    theoretical_storyline = storyline_heading.body.strip()
     relations_heading, index = _section(headings, "RELATIONSHIPS", start=index)
     _empty(relations_heading.body, "RELATIONSHIPS")
     relationships, index = _records(
@@ -309,6 +311,7 @@ def parse_relationship_markdown(text: str) -> dict[str, Any]:
         raise FinalSynthesisMarkdownError(["پس از QUALITY AUDIT بخش یا Heading اضافه مجاز نیست."])
     return {
         "metadata": metadata,
+        "theoretical_storyline": theoretical_storyline,
         "relationships": relationships,
         "unlinked_nodes": unlinked,
         "contradictions": contradictions,

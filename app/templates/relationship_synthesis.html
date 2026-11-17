@@ -37,6 +37,8 @@
 {% set result = latest.output_json %}
 {% set can_review = latest.approval_status != 'approved' %}
 <section class="panel">
+	<h2>روایت نظری تبیین‌کنندهٔ مدل</h2>
+	<p style="white-space: pre-line">{{ result.theoretical_storyline }}</p>
 	<h2>نودهای مدل</h2>
 	{% for node in model_nodes %}<article class="review-card"><strong>{{ node.title }}</strong> · {{ node.component_key }} · <code>{{ node.node_id }}</code><p>{{ node.definition }}</p><p>شواهد: {% for evidence_id in node.evidence_ref_ids %}<code>{{ evidence_id }}</code> {% endfor %}</p></article>{% endfor %}
 

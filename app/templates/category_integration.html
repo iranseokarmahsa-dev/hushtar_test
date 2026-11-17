@@ -5,7 +5,11 @@
 	<div><p class="eyebrow">{{ active_prompt.component_label }}</p><h1>راهنمای تلفیق مقوله‌ها</h1><p class="lede">پرامپت را کپی کنید و به هوش مصنوعی بدهید؛ سپس خروجی آن را در بخش زیر قرار دهید.</p></div>
 	<div class="page-actions"><a class="button button-primary" href="/synthesis/runs/{{ run_id }}/theme-abstraction?component_key={{ active_component_key }}">مرحلهٔ ۴: انتزاع تم همین مؤلفه</a><a class="button button-secondary" href="/synthesis/runs/{{ run_id }}/pool-preview">بازگشت به ظروف منبع</a><a class="button button-secondary" href="/synthesis/runs">همه اجراها</a></div>
 </section>
-{% if request.query_params.get('received') %}<p class="alert alert-success" role="status">خروجی هوش مصنوعی دریافت و معتبر شد. اکنون پرامپت مؤلفهٔ «{{ active_prompt.component_label }}» را کپی کنید و به هوش مصنوعی بدهید.</p>{% endif %}
+{% if request.query_params.get('received') %}
+{% set received_notice = namespace(label=request.query_params.get('received')) %}
+{% for component in components %}{% if component.key == request.query_params.get('received') %}{% set received_notice.label = component.label %}{% endif %}{% endfor %}
+<p class="alert alert-success" role="status">خروجی بخش «{{ received_notice.label }}» با موفقیت ثبت شد؛ اکنون بخش «{{ active_prompt.component_label }}» برای ادامه باز است.</p>
+{% endif %}
 
 <section class="panel">
 	<h2>انتخاب مؤلفه</h2>
@@ -44,9 +48,10 @@
 	{% if latest and latest.status == 'invalid' %}<div class="alert alert-warning" role="alert"><strong>خروجی نیازمند اصلاح است</strong><pre>{{ latest.validation_report_text }}</pre></div>{% endif %}
 	<form method="post" action="/synthesis/runs/{{ run_id }}/category-integration/results">
 		<input type="hidden" name="component_key" value="{{ active_component_key }}">
+		<p class="active-component-register">در حال ثبت خروجی برای بخش: {{ active_prompt.component_label }}</p>
 		<label for="category-integration-output">خروجی هوش مصنوعی را قرار دهید</label>
 		<textarea id="category-integration-output" name="raw_output_text" rows="12" dir="ltr" spellcheck="false" placeholder="# COMPONENT SYNTHESIS RESULT"></textarea>
-		<button class="button button-primary" type="submit">ثبت خروجی</button>
+		<button class="button button-primary" type="submit">ثبت و رفتن به مؤلفهٔ بعدی</button>
 	</form>
 </section>
 

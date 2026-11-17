@@ -31,8 +31,11 @@ from app.services.synthesis.category_integration_service import (
 from app.services.synthesis.category_integration_review_service import (
     record_category_integration_review_decision,
 )
+from app.services.synthesis.reference_mapper import POOL_COMPONENT_KEYS
 from app.services.synthesis.theme_abstraction_service import (
     build_theme_abstraction_prompt,
+    get_approved_theme_abstractions,
+    next_theme_abstraction_component,
     submit_theme_abstraction_output,
     theme_abstraction_page_data,
 )
@@ -189,6 +192,9 @@ class ThemeAbstractionReviewDecision(BaseModel):
     integrated_category_id: str | None = None
     title: str | None = None
     definition: str | None = None
+    rationale: str | None = None
+    abstraction_level: str | None = None
+    preserved_dimensions: str | None = None
     partitions: list[dict[str, Any]] | None = None
 
 
@@ -356,13 +362,18 @@ async def submit_category_integration_result(
         except UnicodeDecodeError as error:
             raise HTTPException(status_code=400, detail="فایل Markdown باید با کدگذاری UTF-8 باشد.") from error
     try:
-        submit_category_integration_output(run_id, component_key, raw_output_text)
+        result = submit_category_integration_output(run_id, component_key, raw_output_text)
     except ValueError as error:
         raise HTTPException(status_code=409, detail=str(error)) from error
-    return RedirectResponse(
-        f"/synthesis/runs/{run_id}/category-integration?component_key={component_key}",
-        status_code=303,
-    )
+    if result.get("status") == "ready_for_researcher_review":
+        component_index = POOL_COMPONENT_KEYS.index(component_key)
+        if component_index + 1 < len(POOL_COMPONENT_KEYS):
+            next_url = f"/synthesis/runs/{run_id}/category-integration?{urlencode({'component_key': POOL_COMPONENT_KEYS[component_index + 1], 'received': '1'})}"
+        else:
+            next_url = f"/synthesis/runs/{run_id}/theme-abstraction?{urlencode({'component_key': POOL_COMPONENT_KEYS[0], 'received': '1'})}"
+    else:
+        next_url = f"/synthesis/runs/{run_id}/category-integration?{urlencode({'component_key': component_key})}"
+    return RedirectResponse(next_url, status_code=303)
 
 
 @router.post("/runs/{run_id}/category-integration/review")
@@ -446,11 +457,21 @@ async def submit_theme_abstraction_result(
         except UnicodeDecodeError as error:
             raise HTTPException(status_code=400, detail="فایل Markdown باید با کدگذاری UTF-8 باشد.") from error
     try:
-        submit_theme_abstraction_output(run_id, component_key, raw_output_text)
+        result = submit_theme_abstraction_output(run_id, component_key, raw_output_text)
     except ValueError as error:
         raise HTTPException(status_code=409, detail=str(error)) from error
+    next_component = (
+        next_theme_abstraction_component(run_id, component_key)
+        if result["status"] != "invalid"
+        else None
+    )
+    params = {
+        "component_key": next_component or component_key,
+    }
+    if result["status"] != "invalid":
+        params["received"] = component_key
     return RedirectResponse(
-        f"/synthesis/runs/{run_id}/theme-abstraction?component_key={component_key}",
+        f"/synthesis/runs/{run_id}/theme-abstraction?{urlencode(params)}",
         status_code=303,
     )
 
@@ -471,15 +492,35 @@ def submit_theme_abstraction_review(
             integrated_category_id=decision.integrated_category_id,
             title=decision.title,
             definition=decision.definition,
+            rationale=decision.rationale,
+            abstraction_level=decision.abstraction_level,
+            preserved_dimensions=decision.preserved_dimensions,
             partitions=decision.partitions,
         )
     except ValueError as error:
         raise HTTPException(status_code=400, detail=str(error)) from error
+    redirect_url = None
+    if decision.decision == "approve_final":
+        approved = get_approved_theme_abstractions(run_id)
+        if set(approved) == set(POOL_COMPONENT_KEYS):
+            redirect_url = f"/synthesis/runs/{run_id}/component-synthesis"
+        else:
+            next_component = next_theme_abstraction_component(
+                run_id,
+                decision.component_key,
+                only_unapproved=True,
+            )
+            if next_component:
+                redirect_url = (
+                    f"/synthesis/runs/{run_id}/theme-abstraction?"
+                    f"{urlencode({'component_key': next_component, 'approved': decision.component_key})}"
+                )
     return JSONResponse({
         "stage_result_id": result["stage_result_id"],
         "version": result["version"],
         "status": result["status"],
         "approval_status": result["approval_status"],
+        "redirect_url": redirect_url,
     })
 
 

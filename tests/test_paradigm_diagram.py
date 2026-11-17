@@ -496,6 +496,11 @@ def test_paradigm_page_builds_and_rebuilds_without_analysis_execution(monkeypatc
 	assert "مقوله مرتبط" not in page.text
 	assert "paradigm.js" in page.text
 	assert "REL01" in page.text
+	assert 'data-export="png"' in page.text
+	assert 'href="/results/project-diagram/paradigm/export/png"' not in page.text
+	assert "دریافت SVG" not in page.text
+	assert "چاپ / PDF" not in page.text
+	assert "data-zoom=" not in page.text
 
 	rebuild = client.post("/results/project-diagram/paradigm/rebuild")
 	assert rebuild.status_code == 303

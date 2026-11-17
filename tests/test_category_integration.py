@@ -83,7 +83,7 @@ def test_five_component_prompts_are_independent_markdown_runs(monkeypatch, tmp_p
         prompts[1]["component_key"],
         _valid_markdown(prompts[1]),
     )
-    assert empty_result["status"] == "approved"
+    assert empty_result["status"] == "ready_for_researcher_review"
 
     client = TestClient(app, follow_redirects=False)
     page = client.get(
@@ -91,7 +91,11 @@ def test_five_component_prompts_are_independent_markdown_runs(monkeypatch, tmp_p
         params={"component_key": "causal_conditions"},
     )
     assert page.status_code == 200
-    assert "پنج اجرای مستقل" in page.text
+    assert "راهنمای تلفیق مقوله‌ها" in page.text
+    assert "متن پرامپت را کپی کنید و به هوش مصنوعی بدهید" in page.text
+    assert "data-copy-category-integration-prompt" in page.text
+    assert "integration-items" not in page.text
+    assert "اصلاح اختیاری مقوله‌ها" not in page.text
     assert "تأیید نهایی مقوله‌های تلفیقی" not in page.text
     assert 'dir="ltr" spellcheck="false"' in page.text
     downloaded = client.get(
@@ -139,7 +143,7 @@ def test_sanitizer_repairs_missing_headings_and_truncates_duplicate_output(monke
         run["run_id"], "causal_conditions", raw_output
     )
 
-    assert result["status"] == "approved"
+    assert result["status"] == "ready_for_researcher_review"
     assert result["raw_output_text"] == raw_output
     assert result["output_json"]["integrated_categories"][0]["source_item_ids"] == [
         item["source_item_id"] for item in prompt["source_items"]
@@ -246,7 +250,7 @@ def test_duplicate_source_items_across_categories_are_accepted_with_warning(monk
     result = submit_category_integration_output(run["run_id"], component_key, markdown)
     report = result["validation_report_json"]
 
-    assert result["status"] == "approved"
+    assert result["status"] == "ready_for_researcher_review"
     assert result["output_json"]["integrated_categories"][1]["source_item_ids"] == [
         source_ids[0]
     ]
@@ -266,7 +270,7 @@ def test_duplicate_source_items_across_categories_are_accepted_with_warning(monk
     assert review.status_code == 200
 
 
-def test_valid_output_is_automatically_approved_and_versions_are_preserved(monkeypatch, tmp_path):
+def test_valid_output_requires_researcher_approval_and_versions_are_preserved(monkeypatch, tmp_path):
     run = _create_run(monkeypatch, tmp_path)
     component_key = "causal_conditions"
     prompt = build_category_integration_prompt(run["run_id"], component_key)
@@ -280,6 +284,17 @@ def test_valid_output_is_automatically_approved_and_versions_are_preserved(monke
     assert invalid["validation_report_json"]["missing_source_item_count"] == 1
 
     client = TestClient(app, follow_redirects=False)
+    invalid_response = client.post(
+        f"/synthesis/runs/{run['run_id']}/category-integration/results",
+        data={
+            "component_key": component_key,
+            "raw_output_text": _valid_markdown(prompt, source_ids[:-1]),
+        },
+    )
+    assert invalid_response.headers["location"] == (
+        f"/synthesis/runs/{run['run_id']}/category-integration"
+        "?component_key=causal_conditions"
+    )
     response = client.post(
         f"/synthesis/runs/{run['run_id']}/category-integration/results",
         data={
@@ -288,6 +303,13 @@ def test_valid_output_is_automatically_approved_and_versions_are_preserved(monke
         },
     )
     assert response.status_code == 303
+    assert response.headers["location"] == (
+        f"/synthesis/runs/{run['run_id']}/category-integration"
+        "?component_key=contextual_conditions&received=1"
+    )
+    next_page = client.get(response.headers["location"])
+    assert "خروجی هوش مصنوعی دریافت و معتبر شد" in next_page.text
+    assert "شرایط زمینه‌ای" in next_page.text
     latest = max(
         (
             result for result in list_stage_results(run["run_id"])
@@ -295,8 +317,14 @@ def test_valid_output_is_automatically_approved_and_versions_are_preserved(monke
         ),
         key=lambda result: result["version"],
     )
-    assert latest["status"] == "approved"
-    assert latest["approval_status"] == "approved"
+    assert latest["status"] == "ready_for_researcher_review"
+    assert latest["approval_status"] == "pending"
+    assert component_key not in get_approved_category_integrations(run["run_id"])
+    approval = client.post(
+        f"/synthesis/runs/{run['run_id']}/category-integration/review",
+        json={"component_key": component_key, "decision": "approve_final", "reason": "مقوله‌ها بررسی شدند."},
+    )
+    assert approval.status_code == 200
 
     approved = get_approved_category_integrations(run["run_id"])[component_key]
     assert approved["integrated_categories"][0]["review_status"] == "approved"
@@ -308,14 +336,47 @@ def test_valid_output_is_automatically_approved_and_versions_are_preserved(monke
         component_key,
         _valid_markdown(next_prompt),
     )
-    assert next_result["approval_status"] == "approved"
-    assert get_approved_category_integrations(run["run_id"])[component_key]["version"] > library_version
+    assert next_result["approval_status"] == "pending"
+    assert get_approved_category_integrations(run["run_id"])[component_key]["version"] == library_version
 
     page_data = category_integration_page_data(run["run_id"], component_key)
     component = next(row for row in page_data["components"] if row["key"] == component_key)
     assert component["approved"] is True
-    assert component["latest"]["approval_status"] == "approved"
-    assert len(page_data["history"]) == 3
+    assert component["latest"]["approval_status"] == "pending"
+    assert len(page_data["history"]) == 5
+
+
+def test_valid_category_outputs_advance_through_all_components(monkeypatch, tmp_path):
+    run = _create_run(monkeypatch, tmp_path)
+    client = TestClient(app, follow_redirects=False)
+    component_keys = (
+        "causal_conditions",
+        "contextual_conditions",
+        "intervening_conditions",
+        "action_interaction_strategies",
+        "consequences",
+    )
+
+    for index, component_key in enumerate(component_keys):
+        prompt = build_category_integration_prompt(run["run_id"], component_key)
+        response = client.post(
+            f"/synthesis/runs/{run['run_id']}/category-integration/results",
+            data={
+                "component_key": component_key,
+                "raw_output_text": _valid_markdown(prompt),
+            },
+        )
+        assert response.status_code == 303
+        if index + 1 < len(component_keys):
+            assert response.headers["location"] == (
+                f"/synthesis/runs/{run['run_id']}/category-integration"
+                f"?component_key={component_keys[index + 1]}&received=1"
+            )
+        else:
+            assert response.headers["location"] == (
+                f"/synthesis/runs/{run['run_id']}/theme-abstraction"
+                "?component_key=causal_conditions&received=1"
+            )
 
 
 def test_category_edit_stales_only_same_component_dependent_results(monkeypatch, tmp_path):

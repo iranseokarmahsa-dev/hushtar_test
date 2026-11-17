@@ -369,7 +369,7 @@ if (dataElement && canvas && links && zoomContent && viewport && detailPanel) {
 			exportStatus.textContent = "تصویر PNG دریافت شد.";
 		} catch (error) {
 			console.error("PNG export failed", error);
-			exportStatus.textContent = "ساخت PNG ناموفق بود. از گزینهٔ چاپ / PDF استفاده کنید.";
+			exportStatus.textContent = "ساخت PNG ناموفق بود. صفحه را تازه‌سازی و دوباره تلاش کنید.";
 		}
 	});
 

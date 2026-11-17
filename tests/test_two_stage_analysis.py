@@ -123,6 +123,8 @@ def test_prompts_are_independent_and_stage2_omits_initial_codes():
 	assert "concept_reviews" not in prompts["stage2"].split("## داده‌های پروژه", 1)[1]
 	assert "paragraphs:" in prompts["stage1"]
 	assert "\nconcepts:" not in prompts["stage1"].split("## داده‌های پروژه", 1)[1]
+	assert "متن کامل همان پاراگراف را بخوانید" in prompts["stage1"]
+	assert "پاسخ‌هایی مانند «اصلاحی پیشنهاد نمی‌شود»" in prompts["stage1"]
 	assert "بلوک کد واحد با برچسب `yaml`" in prompts["stage1"]
 	assert "بلوک کد واحد با برچسب `yaml`" in prompts["stage2"]
 

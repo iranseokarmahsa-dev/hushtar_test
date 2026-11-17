@@ -288,6 +288,11 @@ def _latest_approved_results(run_id: str) -> dict[str, dict[str, Any]]:
             or result["component_key"] not in POOL_COMPONENT_KEYS
             or result.get("status") != "approved"
             or result.get("approval_status") != "approved"
+            or not any(
+                decision.get("operation") == "approve_final"
+                for decision in (result.get("researcher_edits_json") or {}).get("decisions", [])
+                if isinstance(decision, dict)
+            )
         ):
             continue
         component_key = result["component_key"]
@@ -337,14 +342,14 @@ def submit_category_integration_output(
         }
     if parsed is not None and report["valid"]:
         for category in parsed["integrated_categories"]:
-            category["review_status"] = "approved"
+            category["review_status"] = "pending"
     version = get_next_stage_version(run_id, STAGE_KEY, component_key)
     saved = save_stage_result(
         run_id,
         STAGE_KEY,
         component_key,
         version=version,
-        status="approved" if report["valid"] else "invalid",
+        status="ready_for_researcher_review" if report["valid"] else "invalid",
         input_hash=prompt["input_hash"],
         prompt_text=prompt["prompt_text"],
         raw_output_text=raw_output_text,
@@ -353,7 +358,7 @@ def submit_category_integration_output(
         validation_report_text=_validation_text(report),
         source_phase_version=prompt["pool_version"],
         researcher_edits_json={"decisions": []},
-        approval_status="approved" if report["valid"] else "pending",
+        approval_status="pending",
     )
     return saved
 
@@ -444,3 +449,35 @@ def get_approved_category_integrations(run_id: str) -> dict[str, dict[str, Any]]
             "integrated_categories": categories,
         }
     return approved
+
+
+def get_registered_category_integrations(run_id: str) -> dict[str, dict[str, Any]]:
+    registered: dict[str, dict[str, Any]] = {}
+    latest_results = _latest_results(run_id)
+    for component_key in POOL_COMPONENT_KEYS:
+        result = latest_results.get(component_key)
+        if (
+            not result
+            or result.get("status") not in {"ready_for_researcher_review", "approved"}
+            or result.get("approval_status") not in {"pending", "approved"}
+            or not (result.get("validation_report_json") or {}).get("valid")
+        ):
+            continue
+        try:
+            current_hash, _ = _current_hash(run_id, component_key)
+        except ValueError:
+            continue
+        if result.get("input_hash") != current_hash:
+            continue
+        categories = (result.get("output_json") or {}).get("integrated_categories")
+        if not isinstance(categories, list):
+            continue
+        registered[component_key] = {
+            "component_key": component_key,
+            "stage_result_id": result["stage_result_id"],
+            "version": result["version"],
+            "input_hash": result["input_hash"],
+            "source_phase_version": result.get("source_phase_version"),
+            "integrated_categories": categories,
+        }
+    return registered

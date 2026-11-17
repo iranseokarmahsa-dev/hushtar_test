@@ -35,6 +35,10 @@ def test_history_and_delete_are_public_in_production(monkeypatch):
 
 	assert history.status_code == 200
 	assert "مصاحبه آزمایشی" in history.text
+	nav = history.text.split('<nav aria-label="ناوبری اصلی">', 1)[1].split("</nav>", 1)[0]
+	assert '<a href="/projects">تاریخچه</a>' in nav
+	assert '<a href="/synthesis/runs">اجراهای تلفیقی</a>' in nav
+	assert history.text.count('href="/synthesis/runs"') == 1
 	assert 'formaction="/projects/interview-1/delete"' in history.text
 	assert deletion.status_code == 303
 	assert deletion.headers["location"] == "/projects"

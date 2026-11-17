@@ -13,6 +13,7 @@ from app.repositories.synthesis_repository import (
 from app.services.synthesis.reference_mapper import POOL_COMPONENT_KEYS
 from app.services.synthesis.theme_abstraction_service import (
     STAGE_KEY,
+    _lineage_for_category_ids,
     build_theme_abstraction_prompt,
 )
 
@@ -25,6 +26,7 @@ DECISIONS = {
     "mark_unthemed",
     "approve_unthemed",
     "approve_final",
+    "reject_final",
 }
 
 
@@ -60,8 +62,13 @@ def _validate_coverage(
         category_ids = theme.get("integrated_category_ids")
         if not isinstance(category_ids, list) or not category_ids:
             raise ValueError("هر تم باید دست‌کم یک مقولهٔ تلفیقی داشته باشد.")
+        expected_type = "standalone" if len(category_ids) == 1 else "shared"
+        if theme.get("theme_type") != expected_type:
+            raise ValueError("نوع تم با تعداد مقوله‌های عضو تطبیق ندارد.")
         if theme.get("review_status") not in {"pending", "approved"}:
             raise ValueError("وضعیت بازبینی تم معتبر نیست.")
+        if not isinstance(theme.get("source_item_ids"), list) or not isinstance(theme.get("source_origins"), list):
+            raise ValueError("منشأ همهٔ تم‌ها باید حفظ شود.")
         seen.extend(str(category_id) for category_id in category_ids)
     for category in unthemed:
         category_id = str(category.get("integrated_category_id") or "")
@@ -69,6 +76,8 @@ def _validate_coverage(
             raise ValueError("شناسه و دلیل هر مقولهٔ فاقد تم الزامی است.")
         if category.get("review_status") not in {"pending", "approved"}:
             raise ValueError("وضعیت بازبینی مقولهٔ فاقد تم معتبر نیست.")
+        if not isinstance(category.get("source_item_ids"), list) or not isinstance(category.get("source_origins"), list):
+            raise ValueError("منشأ همهٔ مقوله‌های فاقد تم باید حفظ شود.")
         seen.append(category_id)
     if any(category_id not in expected_ids for category_id in seen):
         raise ValueError("شناسهٔ مقولهٔ ناشناخته در تم‌ها یا فهرست فاقد تم وجود دارد.")
@@ -87,6 +96,9 @@ def record_theme_abstraction_review_decision(
     integrated_category_id: str | None = None,
     title: str | None = None,
     definition: str | None = None,
+    rationale: str | None = None,
+    abstraction_level: str | None = None,
+    preserved_dimensions: str | None = None,
     partitions: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     if component_key not in POOL_COMPONENT_KEYS:
@@ -116,6 +128,7 @@ def record_theme_abstraction_review_decision(
         str(category["integrated_category_id"])
         for category in current["source_categories"]
     }
+    source_categories = current["source_categories"]
     edits = deepcopy(latest.get("researcher_edits_json") or {"decisions": []})
     edits.setdefault("decisions", [])
     before: Any = None
@@ -129,8 +142,8 @@ def record_theme_abstraction_review_decision(
         before = deepcopy(theme)
         targets = [theme_id]
         if decision == "edit_theme":
-            if title is None and definition is None:
-                raise ValueError("عنوان یا تعریف جدید الزامی است.")
+            if all(value is None for value in (title, definition, rationale, abstraction_level, preserved_dimensions)):
+                raise ValueError("عنوان، تعریف یا دلیل معنایی جدید الزامی است.")
             if title is not None:
                 if not title.strip():
                     raise ValueError("عنوان تم نمی‌تواند خالی باشد.")
@@ -139,6 +152,15 @@ def record_theme_abstraction_review_decision(
                 if not definition.strip():
                     raise ValueError("تعریف تم نمی‌تواند خالی باشد.")
                 theme["definition"] = definition.strip()
+            if rationale is not None:
+                if not rationale.strip():
+                    raise ValueError("دلیل معنایی تم نمی‌تواند خالی باشد.")
+                theme["rationale"] = rationale.strip()
+            for field, value in (("abstraction_level", abstraction_level), ("preserved_dimensions", preserved_dimensions)):
+                if value is not None:
+                    if not value.strip():
+                        raise ValueError("سطح انتزاع و تفاوت‌های حفظ‌شده نمی‌توانند خالی باشند.")
+                    theme[field] = value.strip()
             theme["review_status"] = "pending"
         else:
             theme["review_status"] = "approved"
@@ -161,6 +183,9 @@ def record_theme_abstraction_review_decision(
             if not definition.strip():
                 raise ValueError("تعریف نهایی تم نمی‌تواند خالی باشد.")
             target["definition"] = definition.strip()
+        target["rationale"] = reason.strip()
+        target["abstraction_level"] = ""
+        target["preserved_dimensions"] = ""
         target["review_status"] = "pending"
         themes.remove(source)
         targets = [theme_id, target_theme_id]
@@ -206,6 +231,9 @@ def record_theme_abstraction_review_decision(
                 "theme_id": new_theme_id,
                 "title": str(partition["title"]).strip(),
                 "definition": str(partition["definition"]).strip(),
+                "rationale": str(partition.get("rationale") or reason).strip(),
+                "abstraction_level": str(partition.get("abstraction_level") or "").strip(),
+                "preserved_dimensions": str(partition.get("preserved_dimensions") or "").strip(),
                 "integrated_category_ids": [
                     str(category_id) for category_id in partition["integrated_category_ids"]
                 ],
@@ -245,10 +273,16 @@ def record_theme_abstraction_review_decision(
                 themes.remove(source)
             else:
                 source["review_status"] = "pending"
+                source["rationale"] = reason.strip()
+                source["abstraction_level"] = ""
+                source["preserved_dimensions"] = ""
         if unthemed_source:
             unthemed.remove(unthemed_source)
         target["integrated_category_ids"].append(integrated_category_id)
         target["review_status"] = "pending"
+        target["rationale"] = reason.strip()
+        target["abstraction_level"] = ""
+        target["preserved_dimensions"] = ""
         targets = [integrated_category_id, target_theme_id]
         after = deepcopy(target)
 
@@ -268,6 +302,9 @@ def record_theme_abstraction_review_decision(
         source["integrated_category_ids"].remove(integrated_category_id)
         if source["integrated_category_ids"]:
             source["review_status"] = "pending"
+            source["rationale"] = reason.strip()
+            source["abstraction_level"] = ""
+            source["preserved_dimensions"] = ""
         else:
             themes.remove(source)
         unthemed.append({
@@ -309,7 +346,30 @@ def record_theme_abstraction_review_decision(
         before = {"approval_status": latest.get("approval_status")}
         after = {"approval_status": "approved"}
 
+    elif decision == "reject_final":
+        before = {"approval_status": latest.get("approval_status")}
+        after = {"approval_status": "rejected"}
+
+    for theme in themes:
+        theme["theme_type"] = (
+            "standalone" if len(theme["integrated_category_ids"]) == 1 else "shared"
+        )
+        theme["source_item_ids"], theme["source_origins"] = _lineage_for_category_ids(
+            source_categories,
+            theme["integrated_category_ids"],
+        )
+    for category in unthemed:
+        category["source_item_ids"], category["source_origins"] = _lineage_for_category_ids(
+            source_categories,
+            [category["integrated_category_id"]],
+        )
     _validate_coverage(themes, unthemed, expected_ids)
+    output["system_validation_status"] = "system_validated"
+    output["researcher_review_status"] = (
+        "researcher_approved" if decision == "approve_final"
+        else "rejected" if decision == "reject_final"
+        else "pending_researcher_review"
+    )
     edits["decisions"].append({
         "operation": decision,
         "target_ids": targets,
@@ -325,7 +385,7 @@ def record_theme_abstraction_review_decision(
         STAGE_KEY,
         component_key,
         version=version,
-        status="approved" if is_approved else "researcher_review",
+        status="approved" if is_approved else "rejected" if decision == "reject_final" else "researcher_review",
         input_hash=latest["input_hash"],
         prompt_text=latest.get("prompt_text", ""),
         raw_output_text=latest.get("raw_output_text", ""),
@@ -334,5 +394,5 @@ def record_theme_abstraction_review_decision(
         validation_report_text=latest.get("validation_report_text", ""),
         source_phase_version=latest.get("source_phase_version"),
         researcher_edits_json=edits,
-        approval_status="approved" if is_approved else "pending",
+        approval_status="approved" if is_approved else "rejected" if decision == "reject_final" else "pending",
     )

@@ -19,6 +19,7 @@ from app.services.synthesis.category_integration_service import (
 from app.services.synthesis.reference_mapper import POOL_COMPONENT_KEYS
 
 DECISIONS = {
+    "approve_final",
     "edit_category",
     "merge_categories",
     "split_category",
@@ -104,7 +105,13 @@ def record_category_integration_review_decision(
     after: Any = None
     targets: list[str] = []
 
-    if decision == "edit_category":
+    if decision == "approve_final":
+        before = {"approval_status": latest.get("approval_status")}
+        for category in categories:
+            category["review_status"] = "approved"
+        after = {"approval_status": "approved"}
+
+    elif decision == "edit_category":
         if not category_id:
             raise ValueError("شناسهٔ مقوله الزامی است.")
         category = _find_category(categories, category_id)
@@ -215,6 +222,9 @@ def record_category_integration_review_decision(
             "target_category": deepcopy(target),
         }
 
+    if decision != "approve_final":
+        for category in categories:
+            category["review_status"] = "pending"
     _validate_coverage(categories, expected_ids)
     decision_record = {
         "operation": decision,
@@ -231,7 +241,7 @@ def record_category_integration_review_decision(
         STAGE_KEY,
         component_key,
         version=version,
-        status="approved",
+        status="approved" if decision == "approve_final" else "ready_for_researcher_review",
         input_hash=latest["input_hash"],
         prompt_text=latest.get("prompt_text", ""),
         raw_output_text=latest.get("raw_output_text", ""),
@@ -240,7 +250,7 @@ def record_category_integration_review_decision(
         validation_report_text=latest.get("validation_report_text", ""),
         source_phase_version=latest.get("source_phase_version"),
         researcher_edits_json=edits,
-        approval_status="approved",
+        approval_status="approved" if decision == "approve_final" else "pending",
     )
     mark_stage_results_stale(
         run_id,

@@ -2,12 +2,27 @@
 {% block title %}مرحله چهارم: انتزاع تم | هوشیار{% endblock %}
 {% block content %}
 <section class="page-heading">
-	<div><p class="eyebrow">مرحله ۴ · پنج اجرای مستقل</p><h1>انتزاع مفهومی و استخراج تم</h1><p class="lede">ورودی فقط مقوله‌های تلفیقی تأییدشدهٔ همان مؤلفه است؛ تحلیل مصاحبه در این مرحله انجام نمی‌شود.</p><small>شناسه اجرا: <code>{{ run_id }}</code></small></div>
+	<div><p class="eyebrow">مرحله ۴ · پنج مؤلفهٔ مستقل</p><h1>انتزاع مفهومی و استخراج تم</h1><p class="lede">ورودی، آخرین خروجی معتبر ثبت‌شدهٔ همان مؤلفه در مرحلهٔ ۳ است؛ تأیید پژوهشگر مرحلهٔ ۳ مستقل می‌ماند.</p><small>شناسه اجرا: <code>{{ run_id }}</code></small></div>
 	<div class="page-actions">
 		<a class="button button-secondary" href="/synthesis/runs/{{ run_id }}/category-integration">بازگشت به مرحلهٔ ۳</a>
 		<a class="button button-secondary" href="/synthesis/runs">همه اجراها</a>
 	</div>
 </section>
+{% if request.query_params.get('received') %}
+{% if request.query_params.get('received') == '1' %}
+<p class="alert alert-success" role="status">خروجی مؤلفه‌های مرحلهٔ ۳ ثبت شد. پس از تأیید پژوهشگر برای هر پنج مؤلفه، استخراج تم را اجرا کنید.</p>
+{% else %}
+{% set received_notice = namespace(label=request.query_params.get('received')) %}
+{% for component in components %}{% if component.key == request.query_params.get('received') %}{% set received_notice.label = component.label %}{% endif %}{% endfor %}
+<p class="alert alert-success" role="status">خروجی معتبر مؤلفهٔ «{{ received_notice.label }}» برای بازبینی پژوهشگر ثبت شد. مؤلفهٔ جاری: «{{ active_prompt.component_label if active_prompt else '' }}».</p>
+{% endif %}
+{% endif %}
+{% if request.query_params.get('approved') %}
+{% set approved_notice = namespace(label=request.query_params.get('approved')) %}
+{% for component in components %}{% if component.key == request.query_params.get('approved') %}{% set approved_notice.label = component.label %}{% endif %}{% endfor %}
+<p class="alert alert-success" role="status">کتابخانهٔ «{{ approved_notice.label }}» تأیید نهایی شد. بازبینی مؤلفهٔ جاری را ادامه دهید.</p>
+{% endif %}
+{% if all_theme_libraries_approved %}<p class="alert alert-success" role="status">هر پنج کتابخانهٔ مرحلهٔ ۴ تأیید شده‌اند. <a href="/synthesis/runs/{{ run_id }}/component-synthesis">ادامه به تلفیق شش‌گام</a></p>{% endif %}
 
 <section class="panel">
 	<h2>انتخاب مؤلفه</h2>
@@ -15,8 +30,10 @@
 	{% for component in components %}
 		<a class="{% if component.key == active_component_key %}is-active{% endif %}" href="/synthesis/runs/{{ run_id }}/theme-abstraction?component_key={{ component.key }}">
 			<strong>{{ component.label }}</strong>
-			{% if component.category_library %}<span class="status-pill success">مرحلهٔ ۳ تأیید · v{{ component.category_library.version }}</span>
-			{% else %}<span class="status-pill warning">در انتظار تأیید مرحلهٔ ۳</span>{% endif %}
+			{% if component.category_library %}<span class="status-pill success">خروجی معتبر مرحلهٔ ۳ · v{{ component.category_library.version }}</span>
+			{% else %}<span class="status-pill warning">بدون خروجی معتبر مرحلهٔ ۳</span>{% endif %}
+			{% if component.approved_result %}<span class="status-pill success">مرحلهٔ ۴ تأیید نهایی</span>
+			{% elif component.latest and component.latest.validation_report_json.valid %}<span class="status-pill warning">در انتظار بازبینی پژوهشگر</span>{% endif %}
 			{% if component.latest %}<small>آخرین نسخهٔ تم: {{ component.latest.version }} · {{ component.latest.status }}</small>{% endif %}
 		</a>
 	{% endfor %}
@@ -28,15 +45,25 @@
 {% endif %}
 
 {% if active_prompt %}
+{% if active_prompt.inherited_warnings %}
+<section class="alert alert-warning" role="status">
+	<strong>هشدارهای شواهد موروثی: {{ active_prompt.inherited_warnings|length }}</strong>
+	<p>قابلیت ردیابی منشأ به معنی تأیید اعتبار نقل‌قول نیست.</p>
+	<ul>{% for warning in active_prompt.inherited_warnings %}<li>{{ warning.issue_type }} · {{ warning.paragraph_id or 'بدون شناسهٔ پاراگراف' }} · <code>{{ warning.source_project_id }}</code></li>{% endfor %}</ul>
+</section>
+{% endif %}
 <section class="panel">
 	<p class="eyebrow">{{ active_prompt.component_label }}</p>
-	<h2>مقوله‌های مبدأ تأییدشده</h2>
+		<h2>مقوله‌های مبدأ ثبت‌شده</h2>
 	<p>{{ active_prompt.source_categories|length }} مقوله · نسخهٔ مرحلهٔ ۳: {{ active_prompt.source_phase_version }}</p>
 	{% for category in active_prompt.source_categories %}
 	<article class="review-card">
 		<strong>{{ category.title }}</strong>
 		<small><code>{{ category.integrated_category_id }}</code></small>
 		<p>{{ category.definition }}</p>
+		{% if category.source_origins %}<details><summary>منشأ مقوله ({{ category.source_item_ids|length }} Source Item)</summary><ul>
+		{% for origin in category.source_origins %}<li><code>{{ origin.source_item_id }}</code> · {{ origin.source_title or origin.source_interview_id }} · مقولهٔ مبدأ {{ origin.original_category_name or origin.source_category_id }} (<code>{{ origin.source_category_id }}</code>)</li>{% endfor %}
+		</ul></details>{% endif %}
 	</article>
 	{% else %}<p>برای این مؤلفه کتابخانه خالی است؛ خروجی باید هر دو فهرست را خالی اعلام کند.</p>{% endfor %}
 </section>
@@ -58,7 +85,7 @@
 	<form method="post" action="/synthesis/runs/{{ run_id }}/theme-abstraction/results" enctype="multipart/form-data">
 		<input type="hidden" name="component_key" value="{{ active_component_key }}">
 		<label for="theme-abstraction-output">خروجی را جای‌گذاری کنید</label>
-		<textarea id="theme-abstraction-output" name="raw_output_text" rows="12" placeholder="# THEME ABSTRACTION RESULT"></textarea>
+		<textarea id="theme-abstraction-output" name="raw_output_text" rows="12" placeholder="# COMPONENT THEMES RESULT"></textarea>
 		<label>یا انتخاب فایل خروجی Markdown<input type="file" name="markdown_file" accept=".md,.markdown,text/markdown"></label>
 		<button class="button button-primary" type="submit">Parse و اعتبارسنجی خروجی</button>
 	</form>
@@ -92,7 +119,8 @@
 	<article class="panel review-card">
 		<h3>{{ theme.title }}</h3>
 		<p>{{ theme.definition }}</p>
-		<p>شناسه: <code>{{ theme.theme_id }}</code> · وضعیت: {{ theme.review_status }}</p>
+		<p>نوع: {{ 'تم مستقل' if theme.theme_type == 'standalone' else 'تم مشترک' }} · شناسه: <code>{{ theme.theme_id }}</code> · وضعیت: {{ theme.review_status }}</p>
+		{% if theme.source_item_ids %}<p><strong>Source Itemها:</strong> {% for source_item_id in theme.source_item_ids %}<code>{{ source_item_id }}</code>{% if not loop.last %}، {% endif %}{% endfor %}</p>{% endif %}
 		<ul>{% for category_id in theme.integrated_category_ids %}
 			{% set category = categories_by_id.get(category_id, {}) %}
 			<li>{{ category.title or category_id }} — <code>{{ category_id }}</code><p>{{ category.definition or '' }}</p></li>
@@ -100,8 +128,8 @@
 			<form class="review-action" data-theme-abstraction-review>
 				<input type="hidden" name="decision" value="mark_unthemed">
 				<input type="hidden" name="integrated_category_id" value="{{ category_id }}">
-				<label>دلیل باقی‌ماندن بدون تم<input name="reason" required></label>
-				<button class="button button-secondary" type="submit">انتقال به فهرست فاقد تم</button>
+				<label>دلیل تعیین‌تکلیف‌نشده<input name="reason" required></label>
+				<button class="button button-secondary" type="submit">تعیین‌تکلیف‌نشده</button>
 			</form>
 			{% endif %}
 		{% endfor %}</ul>
@@ -148,19 +176,20 @@
 	{% endif %}
 
 	{% if unthemed %}
-	<h3>مقوله‌های فاقد تم</h3>
+	<h3>مقوله‌های تعیین‌تکلیف‌نشده</h3>
 	{% for item in unthemed %}
 	<article class="review-card">
 		{% set category = categories_by_id.get(item.integrated_category_id, {}) %}
 		<strong>{{ category.title or item.integrated_category_id }}</strong>
 		<small><code>{{ item.integrated_category_id }}</code> · وضعیت: {{ item.review_status }}</small>
 		<p>{{ item.reason }}</p><p>{{ category.definition or '' }}</p>
+		{% if item.source_item_ids %}<p><strong>Source Itemها:</strong> {% for source_item_id in item.source_item_ids %}<code>{{ source_item_id }}</code>{% if not loop.last %}، {% endif %}{% endfor %}</p>{% endif %}
 		{% if can_review %}
 		<form class="review-action" data-theme-abstraction-review>
 			<input type="hidden" name="decision" value="approve_unthemed">
 			<input type="hidden" name="integrated_category_id" value="{{ item.integrated_category_id }}">
-			<label>دلیل تأیید بدون تم<input name="reason" required></label>
-			<button class="button button-primary" type="submit">تأیید به‌عنوان فاقد تم</button>
+			<label>دلیل تأیید وضعیت تعیین‌تکلیف‌نشده<input name="reason" required></label>
+			<button class="button button-primary" type="submit">تأیید تعیین‌تکلیف‌نشده</button>
 		</form>
 		{% if themes %}
 		<form class="review-action" data-theme-abstraction-review>
@@ -194,6 +223,11 @@
 		<label>دلیل تأیید نهایی<input name="reason" required></label>
 		<button class="button button-primary" type="submit">تأیید نهایی تم‌ها</button>
 	</form>
+	<form class="review-action" data-theme-abstraction-review>
+		<input type="hidden" name="decision" value="reject_final">
+		<label>دلیل رد کتابخانه<input name="reason" required></label>
+		<button class="button button-secondary" type="submit">رد کتابخانه</button>
+	</form>
 	{% endif %}
 </section>
 {% endif %}
@@ -213,6 +247,7 @@
 			event.preventDefault();
 			const formData = new FormData(form, event.submitter);
 			const payload = Object.fromEntries(formData.entries());
+			payload.component_key = {{ active_component_key|tojson }};
 			if (form.dataset.themeAbstractionSplit !== undefined) {
 				payload.partitions = String(payload.partitions_text || '').split(/\r?\n/)
 					.map(function (line) {
@@ -234,6 +269,10 @@
 			const result = await response.json();
 			if (!response.ok) {
 				alert(result.detail || 'ثبت تصمیم ناموفق بود.');
+				return;
+			}
+			if (result.redirect_url) {
+				window.location.assign(result.redirect_url);
 				return;
 			}
 			window.location.reload();

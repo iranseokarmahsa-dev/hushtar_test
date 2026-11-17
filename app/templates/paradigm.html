@@ -6,13 +6,7 @@
 <header class="analysis-page-header paradigm-page-header">
 	<div><p class="eyebrow">مرحلهٔ سوم · نظریه‌پردازی داده‌بنیاد</p><h1>نمودار پارادایمی مصاحبه</h1><p class="lede">{{ project.title }} · نمودار از تحلیل ذخیره‌شده ساخته شده و اجرای دوبارهٔ تحلیل هوش مصنوعی در کار نیست.</p></div>
 	<div class="paradigm-page-actions">
-		<a class="button button-secondary" href="/results/{{ project.project_id }}/interview-analysis">بازگشت به تحلیل مستقل</a>
-		<button class="button button-secondary" type="button" data-zoom="out" aria-label="کوچک‌نمایی نمودار">−</button>
-		<button class="button button-secondary" type="button" data-zoom="fit">نمایش کامل</button>
-		<button class="button button-secondary" type="button" data-zoom="in" aria-label="بزرگ‌نمایی نمودار">+</button>
-		<a class="button button-secondary" href="/results/{{ project.project_id }}/paradigm/export/png">دریافت PNG</a>
-		<a class="button button-secondary" href="/results/{{ project.project_id }}/paradigm/export/svg">دریافت SVG</a>
-		<button class="button button-secondary" type="button" data-print>چاپ / PDF</button>
+		<button class="button button-secondary" type="button" data-export="png">دریافت PNG</button>
 	</div>
 </header>
 <nav class="analysis-steps" aria-label="مراحل تحلیل">

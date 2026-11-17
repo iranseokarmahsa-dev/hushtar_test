@@ -35,9 +35,12 @@ def _headings(text: str) -> list[Heading]:
             locations.append((index, len(match.group(1)), match.group(2).strip()))
         elif not locations and line.strip():
             raise ThemeAbstractionMarkdownError(["متن پیش از عنوان اصلی مجاز نیست."])
-    if not locations or locations[0][1:] != (1, "THEME ABSTRACTION RESULT"):
+    if not locations or locations[0][1] != 1 or locations[0][2] not in {
+        "COMPONENT THEMES RESULT",
+        "THEME ABSTRACTION RESULT",
+    }:
         raise ThemeAbstractionMarkdownError([
-            "عنوان اصلی باید دقیقاً `# THEME ABSTRACTION RESULT` باشد."
+            "عنوان اصلی باید `# COMPONENT THEMES RESULT` باشد."
         ])
     return [
         Heading(
@@ -63,6 +66,44 @@ def _empty(body: str, context: str) -> None:
         raise ThemeAbstractionMarkdownError([
             f"{context}: بخش خالی باید بدون متن یا با مقدار NONE باشد."
         ])
+
+
+def _parse_component_themes(headings: list[Heading]) -> dict[str, Any]:
+    _empty(headings[0].body, "عنوان اصلی")
+    index = _expect(headings, 1, 2, "METADATA")
+    metadata = _fields(
+        headings[index - 1].body,
+        context="METADATA",
+        list_fields=set(),
+        order=("run_id", "component_key", "input_hash"),
+    )
+    index = _expect(headings, index, 2, "THEMES")
+    _empty(headings[index - 1].body, "THEMES")
+    themes = []
+    while index < len(headings) and headings[index].level == 3 and headings[index].title.startswith("THEME: "):
+        node = headings[index]
+        theme = _fields(
+            node.body,
+            context=node.title,
+            list_fields={"integrated_category_ids"},
+            order=("theme_id", "title", "definition", "integrated_category_ids"),
+        )
+        theme["_heading_id"] = node.title.removeprefix("THEME: ").strip()
+        themes.append(theme)
+        index += 1
+    index = _expect(headings, index, 2, "END OF RESULT")
+    _empty(headings[index - 1].body, "END OF RESULT")
+    if index != len(headings):
+        raise ThemeAbstractionMarkdownError([
+            "پس از END OF RESULT هیچ Heading دیگری مجاز نیست."
+        ])
+    return {
+        "_contract": "component_themes_v1",
+        "metadata": metadata,
+        "themes": themes,
+        "categories_without_a_theme": [],
+        "quality_audit": {},
+    }
 
 
 def _fields(
@@ -129,6 +170,8 @@ def parse_theme_abstraction_markdown(text: str) -> dict[str, Any]:
         raise ThemeAbstractionMarkdownError(["سند Markdown خالی است."])
     text = unwrap_outer_markdown_code_fence(text)
     headings = _headings(text)
+    if headings[0].title == "COMPONENT THEMES RESULT":
+        return _parse_component_themes(headings)
     _empty(headings[0].body, "عنوان اصلی")
 
     index = _expect(headings, 1, 2, "METADATA")
@@ -146,8 +189,18 @@ def parse_theme_abstraction_markdown(text: str) -> dict[str, Any]:
         theme = _fields(
             node.body,
             context=node.title,
-            list_fields={"integrated_category_ids"},
-            order=("theme_id", "title", "definition", "integrated_category_ids"),
+            list_fields={"integrated_category_ids", "source_item_ids"},
+            order=(
+                "theme_id",
+                "theme_type",
+                "title",
+                "definition",
+                "rationale",
+                "abstraction_level",
+                "preserved_dimensions",
+                "integrated_category_ids",
+                "source_item_ids",
+            ),
         )
         theme["_heading_id"] = node.title.removeprefix("THEME: ").strip()
         themes.append(theme)
@@ -161,8 +214,8 @@ def parse_theme_abstraction_markdown(text: str) -> dict[str, Any]:
         category = _fields(
             node.body,
             context=node.title,
-            list_fields=set(),
-            order=("integrated_category_id", "reason"),
+            list_fields={"source_item_ids"},
+            order=("integrated_category_id", "source_item_ids", "reason"),
         )
         category["_heading_id"] = node.title.removeprefix("CATEGORY: ").strip()
         unthemed.append(category)

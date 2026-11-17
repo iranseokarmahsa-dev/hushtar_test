@@ -18,6 +18,14 @@ from app.services.synthesis.theme_synthesis_prompt import (
     _make_category_units,
     latest_theme_result,
 )
+from app.services.synthesis.category_integration_service import (
+    STAGE_KEY as CATEGORY_INTEGRATION_STAGE_KEY,
+    get_approved_category_integrations,
+)
+from app.services.synthesis.theme_abstraction_service import (
+    STAGE_KEY as THEME_ABSTRACTION_STAGE_KEY,
+    get_approved_theme_abstractions,
+)
 
 PHENOMENON_STAGE_KEY = "phenomenon_synthesis"
 RELATIONSHIP_STAGE_KEY = "relationship_synthesis"
@@ -41,7 +49,205 @@ def _source_relationship_id(project_id: str, local_id: str) -> str:
     return f"srel_{stable_hash([project_id, local_id])[:24]}"
 
 
+def _approved_stage_four(
+    run_id: str,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], dict[str, Any], int] | None:
+    stage_four_rows = [
+        row for row in list_stage_results(run_id)
+        if row["stage_key"] == THEME_ABSTRACTION_STAGE_KEY
+    ]
+    if not stage_four_rows:
+        return None
+
+    theme_libraries = get_approved_theme_abstractions(run_id)
+    if set(theme_libraries) != set(POOL_COMPONENT_KEYS):
+        raise ValueError("برای ساخت مدل نهایی، خروجی تأییدشدهٔ هر پنج مؤلفهٔ مرحلهٔ ۴ لازم است.")
+    category_libraries = get_approved_category_integrations(run_id)
+    if set(category_libraries) != set(POOL_COMPONENT_KEYS):
+        raise ValueError("برای ساخت مدل نهایی، کتابخانهٔ معتبر هر پنج مؤلفهٔ مرحلهٔ ۳ لازم است.")
+
+    pool, _, _ = _approved_pool(run_id)
+    evidence_by_id = {
+        str(item["evidence_ref_id"]): item
+        for item in pool.get("evidence", [])
+        if item.get("evidence_ref_id") and item.get("valid")
+    }
+    theme_nodes: list[dict[str, Any]] = []
+    standalone_nodes: list[dict[str, Any]] = []
+    unit_by_id: dict[str, dict[str, Any]] = {}
+    unit_to_node: dict[str, str] = {}
+    source_item_to_node: dict[str, str] = {}
+    result_rows = []
+    category_snapshot = []
+
+    for component_key in POOL_COMPONENT_KEYS:
+        theme_library = theme_libraries[component_key]
+        category_library = category_libraries[component_key]
+        theme_result = _latest(run_id, THEME_ABSTRACTION_STAGE_KEY, component_key)
+        if (
+            theme_result is None
+            or theme_result.get("status") != "approved"
+            or theme_result.get("approval_status") != "approved"
+            or theme_result.get("stage_result_id") != theme_library["stage_result_id"]
+        ):
+            raise ValueError(f"نسخهٔ تأییدشدهٔ تم‌های مؤلفهٔ {component_key} معتبر نیست.")
+        result_rows.append(theme_result)
+
+        source_items = {
+            str(item["source_item_id"]): item
+            for item in pool.get("pools", {}).get(component_key, [])
+            if isinstance(item, dict) and item.get("source_item_id")
+        }
+        categories = {
+            str(item["category_id"]): item
+            for item in category_library["integrated_categories"]
+        }
+        category_snapshot.append({
+            "component_key": component_key,
+            "stage_result_id": category_library["stage_result_id"],
+            "version": category_library["version"],
+            "input_hash": category_library["input_hash"],
+            "theme_stage_result_id": theme_library["stage_result_id"],
+            "theme_version": theme_library["version"],
+            "theme_input_hash": theme_library["input_hash"],
+        })
+
+        component_output = theme_result.get("output_json") or {}
+        assignments: dict[str, str] = {}
+        for theme in component_output.get("themes", []):
+            local_theme_id = str(theme.get("theme_id") or "")
+            node_id = f"{component_key}_{local_theme_id}"
+            category_ids = [str(value) for value in theme.get("integrated_category_ids", [])]
+            member_categories = []
+            for category_id in category_ids:
+                category = categories.get(category_id)
+                if category is None:
+                    raise ValueError(f"تم {node_id} به مقولهٔ نامعتبر {category_id} ارجاع می‌دهد.")
+                unit_id = f"unit_{component_key}_{category_id}"
+                member_categories.append((unit_id, category))
+                if category_id in assignments:
+                    raise ValueError(f"مقولهٔ {category_id} در چند تم مرحلهٔ ۴ تکرار شده است.")
+                assignments[category_id] = node_id
+            member_items = []
+            for _, category in member_categories:
+                for source_item_id in category.get("source_item_ids", []):
+                    source_item_id = str(source_item_id)
+                    source_item = source_items.get(source_item_id)
+                    if source_item is None:
+                        raise ValueError(f"Source Item نامعتبر در تم {node_id}: {source_item_id}")
+                    if source_item_id in source_item_to_node:
+                        raise ValueError(f"Source Item در بیش از یک تم مرحلهٔ ۴ آمده است: {source_item_id}")
+                    member_items.append(source_item)
+                    source_item_to_node[source_item_id] = node_id
+            evidence_ids = sorted({
+                str(reference["evidence_ref_id"])
+                for item in member_items
+                for reference in item.get("evidence_refs", [])
+                if reference.get("evidence_ref_id")
+            })
+            if any(evidence_id not in evidence_by_id for evidence_id in evidence_ids):
+                raise ValueError(f"تم {node_id} به شاهدی خارج از Snapshot ارجاع می‌دهد.")
+            node = {
+                "node_id": node_id,
+                "node_type": "theme",
+                "component_key": component_key,
+                "title": str(theme.get("title") or ""),
+                "definition": str(theme.get("definition") or ""),
+                "source_ids": [],
+                "source_item_ids": sorted(source_item_to_node_id for source_item_to_node_id, mapped_node in source_item_to_node.items() if mapped_node == node_id),
+                "category_unit_ids": [unit_id for unit_id, _ in member_categories],
+                "theme_ids": [node_id],
+                "evidence_ref_ids": evidence_ids,
+                "approval_status": "approved",
+                "source_phase": THEME_ABSTRACTION_STAGE_KEY,
+                "source_phase_version": theme_result["version"],
+                "unit_kind": None,
+                "source_items": member_items,
+            }
+            theme_nodes.append(node)
+            for unit_id, category in member_categories:
+                unit_by_id[unit_id] = category
+                unit_to_node[unit_id] = node_id
+
+        for item in component_output.get("categories_without_a_theme", []):
+            category_id = str(item.get("integrated_category_id") or "")
+            category = categories.get(category_id)
+            if category is None or category_id in assignments:
+                raise ValueError(f"مقولهٔ فاقد تم {category_id} در ورودی تأییدشده معتبر نیست.")
+            node_id = f"{component_key}_{category_id}"
+            unit_id = f"unit_{component_key}_{category_id}"
+            member_items = []
+            for source_item_id in category.get("source_item_ids", []):
+                source_item_id = str(source_item_id)
+                source_item = source_items.get(source_item_id)
+                if source_item is None or source_item_id in source_item_to_node:
+                    raise ValueError(f"Source Item مقولهٔ فاقد تم معتبر نیست: {source_item_id}")
+                member_items.append(source_item)
+                source_item_to_node[source_item_id] = node_id
+            evidence_ids = sorted({
+                str(reference["evidence_ref_id"])
+                for source_item in member_items
+                for reference in source_item.get("evidence_refs", [])
+                if reference.get("evidence_ref_id")
+            })
+            if any(evidence_id not in evidence_by_id for evidence_id in evidence_ids):
+                raise ValueError(f"مقولهٔ فاقد تم {category_id} به شاهدی خارج از Snapshot ارجاع می‌دهد.")
+            standalone_nodes.append({
+                "node_id": node_id,
+                "node_type": "category_unit",
+                "component_key": component_key,
+                "title": str(category.get("title") or ""),
+                "definition": str(category.get("definition") or ""),
+                "source_ids": [],
+                "source_item_ids": [str(item["source_item_id"]) for item in member_items],
+                "category_unit_ids": [unit_id],
+                "theme_ids": [],
+                "evidence_ref_ids": evidence_ids,
+                "approval_status": "approved",
+                "source_phase": THEME_ABSTRACTION_STAGE_KEY,
+                "source_phase_version": theme_result["version"],
+                "unit_kind": "unthemed_category",
+                "source_items": member_items,
+            })
+            unit_by_id[unit_id] = category
+            unit_to_node[unit_id] = node_id
+            assignments[category_id] = node_id
+
+        if set(assignments) != set(categories):
+            raise ValueError(f"پوشش مقوله‌های مرحلهٔ ۴ در مؤلفهٔ {component_key} کامل نیست.")
+
+    stage_four_version = max(int(row["version"]) for row in result_rows)
+    stage_three_version = max(
+        int(library["version"]) for library in category_libraries.values()
+    )
+    aggregate_result = {
+        "stage_key": THEME_ABSTRACTION_STAGE_KEY,
+        "version": stage_four_version,
+        "source_phase_version": stage_three_version,
+        "input_hash": stable_hash(category_snapshot),
+        "researcher_edits_json": {
+            "decisions": [
+                decision
+                for row in result_rows
+                for decision in (row.get("researcher_edits_json") or {}).get("decisions", [])
+            ]
+        },
+        "stage_versions": category_snapshot,
+    }
+    return theme_nodes, standalone_nodes, {
+        "unit_by_id": unit_by_id,
+        "unit_to_node": unit_to_node,
+        "source_item_to_node": source_item_to_node,
+        "result": aggregate_result,
+        "source_stage_key": THEME_ABSTRACTION_STAGE_KEY,
+    }, stage_four_version
+
+
 def _approved_phase_five(run_id: str) -> tuple[list[dict[str, Any]], list[dict[str, Any]], dict[str, Any], int]:
+    stage_four = _approved_stage_four(run_id)
+    if stage_four is not None:
+        return stage_four
+
     latest = latest_theme_result(run_id)
     if latest is None or latest.get("stale"):
         raise ValueError("خروجی معتبر و به‌روز فاز پنجم وجود ندارد.")
@@ -380,6 +586,13 @@ def load_final_synthesis_inputs(run_id: str) -> dict[str, Any]:
         "research_question": "",
         "objectives": [],
     }
+    phase_five_result = (
+        mappings["result"]
+        if mappings.get("source_stage_key") == THEME_ABSTRACTION_STAGE_KEY
+        else _latest(run_id, THEME_STAGE_KEY, THEME_COMPONENT_KEY)
+    )
+    if phase_five_result is None:
+        raise ValueError("خروجی تأییدشدهٔ مرحلهٔ ۴ برای ساخت مدل نهایی وجود ندارد.")
     base_input = {
         "run_id": run_id,
         "run": project_metadata,
@@ -399,6 +612,12 @@ def load_final_synthesis_inputs(run_id: str) -> dict[str, Any]:
         ],
         "themes": theme_nodes,
         "standalone_category_units": standalone_nodes,
+        "phase_five_snapshot": {
+            "stage_key": phase_five_result.get("stage_key", THEME_STAGE_KEY),
+            "version": phase_five_result.get("version"),
+            "input_hash": phase_five_result.get("input_hash"),
+            "stage_versions": phase_five_result.get("stage_versions", []),
+        },
         "source_phenomena": source_phenomena,
         "source_relationships": source_relationships,
         "evidence": [
@@ -425,7 +644,7 @@ def load_final_synthesis_inputs(run_id: str) -> dict[str, Any]:
         "unit_to_node": mappings["unit_to_node"],
         "base_input": base_input,
         "base_input_hash": stable_hash(base_input),
-        "phase_five_result": _latest(run_id, THEME_STAGE_KEY, THEME_COMPONENT_KEY),
+        "phase_five_result": phase_five_result,
         "pool_result": pool_result,
         "source_rows": get_run_sources(run_id),
     }

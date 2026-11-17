@@ -43,3 +43,5 @@
 در QUALITY AUDIT به‌ترتیب این فیلدها را بیاور: `total_category_units`, `total_themes`, `themed_category_units`, `unthemed_category_units`, `total_contradictions`, `missing_category_unit_ids`, `duplicate_category_unit_ids`, `unknown_category_unit_ids`, `unknown_evidence_ref_ids`, `notes`.
 
 {{FORMAT_CONTRACT}}
+
+کل سند خروجی را درون یک بلوک کد واحد با سه علامت بک‌تیک قرار بده و هیچ متنی بیرون از بلوک ننویس.

@@ -253,7 +253,9 @@ def test_theme_output_review_history_and_source_phase_staleness(monkeypatch, tmp
     run, pool, _ = _create_run(monkeypatch, tmp_path)
     approved_grouping = _approved_grouping(run["run_id"], pool, approve_standalone=True)
     prompt = build_theme_synthesis_prompt(run["run_id"])
-    submitted = submit_theme_synthesis_output(run["run_id"], _theme_markdown(prompt))
+    submitted = submit_theme_synthesis_output(
+        run["run_id"], f"```markdown\n{_theme_markdown(prompt)}\n```"
+    )
 
     assert submitted["valid"] is True, str(submitted["validation_report"]["errors"])
     page_response = TestClient(app).get(f"/synthesis/runs/{run['run_id']}/theme-synthesis")

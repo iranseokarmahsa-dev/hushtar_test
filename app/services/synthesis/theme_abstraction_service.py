@@ -1,0 +1,399 @@
+from __future__ import annotations
+
+import re
+from pathlib import Path
+from typing import Any
+
+from app.repositories.synthesis_repository import (
+    get_next_stage_version,
+    list_stage_results,
+    save_stage_result,
+)
+from app.services.synthesis.category_integration_service import (
+    COMPONENT_LABELS,
+    get_approved_category_integrations,
+)
+from app.services.synthesis.normalization_service import stable_hash
+from app.services.synthesis.reference_mapper import POOL_COMPONENT_KEYS
+from app.services.synthesis.theme_abstraction_markdown_parser import (
+    ThemeAbstractionMarkdownError,
+    parse_theme_abstraction_markdown,
+)
+
+STAGE_KEY = "theme_abstraction"
+PROMPT_PATH = Path(__file__).resolve().parents[3] / "prompts" / "synthesis" / "theme_abstraction.txt"
+
+
+def _text_block(value: Any) -> str:
+    text = "" if value is None else str(value)
+    if not text:
+        return "  NONE"
+    fence_length = max(3, max((len(run) for run in re.findall(r"~+", text)), default=0) + 1)
+    fence = "~" * fence_length
+    content = "\n".join(f"  {line}" for line in text.splitlines())
+    return f"  {fence}text\n{content}\n  {fence}"
+
+
+def build_theme_abstraction_prompt(run_id: str, component_key: str) -> dict[str, Any]:
+    if component_key not in POOL_COMPONENT_KEYS:
+        raise ValueError("مؤلفهٔ درخواستی معتبر نیست.")
+    approved = get_approved_category_integrations(run_id).get(component_key)
+    if approved is None:
+        raise ValueError("ابتدا خروجی معتبر همین مؤلفه را در مرحلهٔ ۳ ثبت کنید.")
+
+    categories = [
+        {
+            "integrated_category_id": str(item["category_id"]),
+            "title": str(item["title"]),
+            "definition": str(item["definition"]),
+        }
+        for item in approved["integrated_categories"]
+    ]
+    source_phase_version = int(approved["version"])
+    template = PROMPT_PATH.read_text(encoding="utf-8")
+    input_hash = stable_hash({
+        "run_id": run_id,
+        "component_key": component_key,
+        "source_stage_result_id": approved["stage_result_id"],
+        "source_phase_version": source_phase_version,
+        "source_input_hash": approved["input_hash"],
+        "categories": categories,
+        "prompt_template": template,
+    })
+    category_lines = []
+    for category in categories:
+        category_lines.extend([
+            f"### INTEGRATED CATEGORY: {category['integrated_category_id']}",
+            f"- integrated_category_id: {category['integrated_category_id']}",
+            "- title:",
+            _text_block(category["title"]),
+            "- definition:",
+            _text_block(category["definition"]),
+            "",
+        ])
+    substitutions = {
+        "COMPONENT_KEY": component_key,
+        "COMPONENT_LABEL": COMPONENT_LABELS[component_key],
+        "RUN_ID": run_id,
+        "INPUT_HASH": input_hash,
+        "SOURCE_PHASE_VERSION": str(source_phase_version),
+        "APPROVED_CATEGORIES_MARKDOWN": "\n".join(category_lines).strip() or "NONE",
+    }
+    prompt_text = re.sub(
+        r"\{\{(COMPONENT_KEY|COMPONENT_LABEL|RUN_ID|INPUT_HASH|SOURCE_PHASE_VERSION|APPROVED_CATEGORIES_MARKDOWN)\}\}",
+        lambda match: substitutions[match.group(1)],
+        template,
+    )
+    return {
+        "run_id": run_id,
+        "stage_key": STAGE_KEY,
+        "component_key": component_key,
+        "component_label": COMPONENT_LABELS[component_key],
+        "input_hash": input_hash,
+        "source_phase_version": source_phase_version,
+        "source_stage_result_id": approved["stage_result_id"],
+        "source_categories": categories,
+        "prompt_text": prompt_text,
+    }
+
+
+def _as_count(value: Any, field: str, errors: list[str]) -> int | None:
+    digits = str(value or "").strip().translate(str.maketrans("۰۱۲۳۴۵۶۷۸۹", "0123456789"))
+    try:
+        count = int(digits)
+    except (TypeError, ValueError):
+        errors.append(f"شمارندهٔ `{field}` عدد صحیح معتبر نیست.")
+        return None
+    if count < 0:
+        errors.append(f"شمارندهٔ `{field}` نمی‌تواند منفی باشد.")
+        return None
+    return count
+
+
+def validate_theme_abstraction_result(
+    parsed: dict[str, Any],
+    *,
+    run_id: str,
+    component_key: str,
+    input_hash: str,
+    source_phase_version: int,
+    source_categories: list[dict[str, Any]],
+) -> dict[str, Any]:
+    errors: list[str] = []
+    metadata = parsed.get("metadata") if isinstance(parsed.get("metadata"), dict) else {}
+    if set(metadata) != {"run_id", "component_key", "input_hash", "source_phase_version"}:
+        errors.append("فیلدهای METADATA باید دقیقاً run_id، component_key، input_hash و source_phase_version باشند.")
+    for field, expected in {
+        "run_id": run_id,
+        "component_key": component_key,
+        "input_hash": input_hash,
+        "source_phase_version": str(source_phase_version),
+    }.items():
+        if str(metadata.get(field) or "").strip() != expected:
+            errors.append(f"فرادادهٔ {field} با اجرای جاری مطابقت ندارد.")
+
+    expected_ids = [str(category["integrated_category_id"]) for category in source_categories]
+    expected_set = set(expected_ids)
+    if len(expected_ids) != len(expected_set):
+        errors.append("شناسهٔ مقولهٔ ورودی تکراری است.")
+    themes = parsed.get("themes")
+    unthemed = parsed.get("categories_without_a_theme")
+    if not isinstance(themes, list):
+        themes = []
+        errors.append("بخش THEMES باید فهرست تم‌ها باشد.")
+    if not isinstance(unthemed, list):
+        unthemed = []
+        errors.append("بخش CATEGORIES WITHOUT A THEME باید فهرست مقوله‌ها باشد.")
+    if not expected_ids and (themes or unthemed):
+        errors.append("برای ورودی خالی نباید تم یا مقولهٔ فاقد تم ساخته شود.")
+
+    theme_ids: set[str] = set()
+    seen_category_ids: list[str] = []
+    for index, theme in enumerate(themes, start=1):
+        if not isinstance(theme, dict):
+            errors.append(f"ساختار تم شمارهٔ {index} معتبر نیست.")
+            continue
+        theme_id = str(theme.get("theme_id") or "").strip()
+        expected_theme_id = f"theme_{index}"
+        if theme_id != expected_theme_id or theme.get("_heading_id") != theme_id:
+            errors.append(f"شناسهٔ تم شمارهٔ {index} باید `{expected_theme_id}` باشد و با Heading تطبیق کند.")
+        if theme_id in theme_ids:
+            errors.append(f"شناسهٔ تم تکراری است: {theme_id}")
+        theme_ids.add(theme_id)
+        if not str(theme.get("title") or "").strip():
+            errors.append(f"عنوان تم شمارهٔ {index} خالی است.")
+        if not str(theme.get("definition") or "").strip():
+            errors.append(f"تعریف تم شمارهٔ {index} خالی است.")
+        category_ids = theme.get("integrated_category_ids")
+        if not isinstance(category_ids, list) or not category_ids:
+            errors.append(f"تم شمارهٔ {index} باید دست‌کم یک مقولهٔ تلفیقی داشته باشد.")
+            continue
+        seen_category_ids.extend(str(item_id) for item_id in category_ids)
+
+    for index, category in enumerate(unthemed, start=1):
+        if not isinstance(category, dict):
+            errors.append(f"ساختار مقولهٔ فاقد تم شمارهٔ {index} معتبر نیست.")
+            continue
+        category_id = str(category.get("integrated_category_id") or "").strip()
+        if category.get("_heading_id") != category_id:
+            errors.append(f"شناسهٔ Heading مقولهٔ فاقد تم شمارهٔ {index} مطابقت ندارد.")
+        if not str(category.get("reason") or "").strip():
+            errors.append(f"دلیل مقولهٔ فاقد تم شمارهٔ {index} خالی است.")
+        seen_category_ids.append(category_id)
+
+    counts: dict[str, int] = {}
+    for category_id in seen_category_ids:
+        counts[category_id] = counts.get(category_id, 0) + 1
+    duplicate_count = sum(max(count - 1, 0) for count in counts.values())
+    missing_count = len(expected_set - set(counts))
+    unknown_count = sum(1 for category_id in seen_category_ids if category_id not in expected_set)
+    if duplicate_count:
+        errors.append(f"{duplicate_count} ارجاع تکراری به مقولهٔ تلفیقی وجود دارد.")
+    if missing_count:
+        errors.append(f"{missing_count} مقولهٔ تلفیقی تعیین‌تکلیف‌نشده وجود دارد.")
+    if unknown_count:
+        errors.append(f"{unknown_count} ارجاع به مقولهٔ تلفیقی ناشناخته وجود دارد.")
+
+    quality = parsed.get("quality_audit") if isinstance(parsed.get("quality_audit"), dict) else {}
+    expected_quality = {
+        "total_input_categories": len(expected_ids),
+        "total_assigned_categories": len(seen_category_ids),
+        "duplicate_category_ids": duplicate_count,
+        "missing_category_ids": missing_count,
+        "unknown_category_ids": unknown_count,
+    }
+    for field, expected in expected_quality.items():
+        actual = _as_count(quality.get(field), field, errors)
+        if actual is not None and actual != expected:
+            errors.append(f"شمارندهٔ `{field}` با دادهٔ واقعی مطابقت ندارد (واقعی: {expected}).")
+    expected_status = "PASS" if not (duplicate_count or missing_count or unknown_count) else "FAIL"
+    status = str(quality.get("status") or "").strip().upper()
+    if status not in {"PASS", "FAIL"}:
+        errors.append("مقدار status در QUALITY AUDIT باید PASS یا FAIL باشد.")
+    elif status != expected_status:
+        errors.append(f"status در QUALITY AUDIT باید {expected_status} باشد.")
+    warnings = quality.get("warnings") if isinstance(quality.get("warnings"), list) else []
+    warnings = [str(item).strip() for item in warnings if str(item).strip() and str(item).strip().upper() != "NONE"]
+    return {
+        "valid": not errors,
+        "errors": errors,
+        "warnings": warnings,
+        "checked_category_count": len(expected_ids),
+        "assigned_category_count": len(seen_category_ids),
+        "duplicate_category_count": duplicate_count,
+        "missing_category_count": missing_count,
+        "unknown_category_count": unknown_count,
+    }
+
+
+def _latest_results(run_id: str) -> dict[str, dict[str, Any]]:
+    latest: dict[str, dict[str, Any]] = {}
+    for result in list_stage_results(run_id):
+        if result["stage_key"] != STAGE_KEY or result["component_key"] not in POOL_COMPONENT_KEYS:
+            continue
+        key = result["component_key"]
+        if key not in latest or result["version"] > latest[key]["version"]:
+            latest[key] = result
+    return latest
+
+
+def _latest_approved_results(run_id: str) -> dict[str, dict[str, Any]]:
+    approved: dict[str, dict[str, Any]] = {}
+    for result in list_stage_results(run_id):
+        if (
+            result["stage_key"] != STAGE_KEY
+            or result["component_key"] not in POOL_COMPONENT_KEYS
+            or result.get("status") != "approved"
+            or result.get("approval_status") != "approved"
+        ):
+            continue
+        key = result["component_key"]
+        if key not in approved or result["version"] > approved[key]["version"]:
+            approved[key] = result
+    return approved
+
+
+def _validation_text(report: dict[str, Any]) -> str:
+    lines = ["خروجی Markdown: " + ("معتبر" if report.get("valid") else "نامعتبر")]
+    lines.extend(f"- خطا: {error}" for error in report.get("errors", []))
+    lines.extend(f"- هشدار: {warning}" for warning in report.get("warnings", []))
+    return "\n".join(lines)
+
+
+def submit_theme_abstraction_output(
+    run_id: str,
+    component_key: str,
+    raw_output_text: str,
+) -> dict[str, Any]:
+    prompt = build_theme_abstraction_prompt(run_id, component_key)
+    parsed = None
+    try:
+        parsed = parse_theme_abstraction_markdown(raw_output_text)
+        report = validate_theme_abstraction_result(
+            parsed,
+            run_id=run_id,
+            component_key=component_key,
+            input_hash=prompt["input_hash"],
+            source_phase_version=prompt["source_phase_version"],
+            source_categories=prompt["source_categories"],
+        )
+    except ThemeAbstractionMarkdownError as error:
+        report = {
+            "valid": False,
+            "errors": error.errors,
+            "warnings": [],
+            "checked_category_count": len(prompt["source_categories"]),
+            "assigned_category_count": 0,
+            "duplicate_category_count": 0,
+            "missing_category_count": len(prompt["source_categories"]),
+            "unknown_category_count": 0,
+        }
+    if parsed is not None and report["valid"]:
+        parsed["source_stage_result_id"] = prompt["source_stage_result_id"]
+        for theme in parsed["themes"]:
+            theme["review_status"] = "pending"
+        for category in parsed["categories_without_a_theme"]:
+            category["review_status"] = "pending"
+    version = get_next_stage_version(run_id, STAGE_KEY, component_key)
+    return save_stage_result(
+        run_id,
+        STAGE_KEY,
+        component_key,
+        version=version,
+        status="ready_for_researcher_review" if report["valid"] else "invalid",
+        input_hash=prompt["input_hash"],
+        prompt_text=prompt["prompt_text"],
+        raw_output_text=raw_output_text,
+        output_json=parsed if parsed is not None else {},
+        validation_report_json=report,
+        validation_report_text=_validation_text(report),
+        source_phase_version=prompt["source_phase_version"],
+        researcher_edits_json={"decisions": []},
+        approval_status="pending",
+    )
+
+
+def theme_abstraction_page_data(run_id: str, component_key: str) -> dict[str, Any]:
+    if component_key not in POOL_COMPONENT_KEYS:
+        raise ValueError("مؤلفهٔ درخواستی معتبر نیست.")
+    latest_results = _latest_results(run_id)
+    latest = latest_results.get(component_key)
+    approved_results = _latest_approved_results(run_id)
+    history = [
+        result
+        for result in list_stage_results(run_id)
+        if result["stage_key"] == STAGE_KEY and result["component_key"] == component_key
+    ]
+    approved_library = get_approved_category_integrations(run_id)
+    component_rows = [
+        {
+            "key": key,
+            "label": COMPONENT_LABELS[key],
+            "category_library": approved_library.get(key),
+            "latest": latest_results.get(key),
+            "approved_result": approved_results.get(key),
+        }
+        for key in POOL_COMPONENT_KEYS
+    ]
+    page_error = None
+    try:
+        prompt = build_theme_abstraction_prompt(run_id, component_key)
+    except ValueError as error:
+        prompt = None
+        page_error = str(error)
+    if latest:
+        latest["stale"] = (
+            latest.get("status") == "stale"
+            or latest.get("approval_status") == "stale"
+            or prompt is None
+            or latest.get("input_hash") != prompt["input_hash"]
+        )
+    categories_by_id = {
+        category["integrated_category_id"]: category
+        for category in (prompt["source_categories"] if prompt else [])
+    }
+    return {
+        "run_id": run_id,
+        "components": component_rows,
+        "active_component_key": component_key,
+        "active_prompt": prompt,
+        "page_error": page_error,
+        "latest": latest,
+        "history": history,
+        "categories_by_id": categories_by_id,
+    }
+
+
+def get_approved_theme_abstractions(run_id: str) -> dict[str, dict[str, Any]]:
+    approved_results = _latest_approved_results(run_id)
+    approved_categories = get_approved_category_integrations(run_id)
+    result: dict[str, dict[str, Any]] = {}
+    for component_key in POOL_COMPONENT_KEYS:
+        theme_result = approved_results.get(component_key)
+        category_library = approved_categories.get(component_key)
+        if not theme_result or not category_library:
+            continue
+        prompt = build_theme_abstraction_prompt(run_id, component_key)
+        if theme_result.get("input_hash") != prompt["input_hash"]:
+            continue
+        output = theme_result.get("output_json") or {}
+        themes = output.get("themes", [])
+        unthemed = output.get("categories_without_a_theme", [])
+        if not all(item.get("review_status") == "approved" for item in [*themes, *unthemed]):
+            continue
+        result[component_key] = {
+            "component_key": component_key,
+            "stage_result_id": theme_result["stage_result_id"],
+            "version": theme_result["version"],
+            "input_hash": theme_result["input_hash"],
+            "source_phase_version": theme_result.get("source_phase_version"),
+            "source_stage_result_id": output.get("source_stage_result_id"),
+            "source_categories": category_library["integrated_categories"],
+            "integrated_category_ids": [
+                category["category_id"]
+                for category in category_library["integrated_categories"]
+            ],
+            "themes": themes,
+            "categories_without_a_theme": unthemed,
+        }
+    return result

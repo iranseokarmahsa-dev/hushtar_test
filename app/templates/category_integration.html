@@ -1,0 +1,207 @@
+{% extends "base.html" %}
+{% block title %}مرحله سوم: تلفیق مقوله‌ها | هوشیار{% endblock %}
+{% block content %}
+<section class="page-heading">
+	<div><p class="eyebrow">مرحله ۳ · پنج اجرای مستقل</p><h1>تلفیق مقوله‌های اولیه</h1><p class="lede">ورودی، Prompt و خروجی هر مؤلفه مستقل است.</p><small>شناسه اجرا: <code>{{ run_id }}</code></small></div>
+	<div class="page-actions"><a class="button button-primary" href="/synthesis/runs/{{ run_id }}/theme-abstraction?component_key={{ active_component_key }}">مرحلهٔ ۴: انتزاع تم همین مؤلفه</a><a class="button button-secondary" href="/synthesis/runs/{{ run_id }}/pool-preview">بازگشت به ظروف منبع</a><a class="button button-secondary" href="/synthesis/runs">همه اجراها</a></div>
+</section>
+
+<section class="panel">
+	<h2>انتخاب مؤلفه</h2>
+	<nav class="component-step-list">
+	{% for component in components %}
+		<a class="{% if component.key == active_component_key %}is-active{% endif %}" href="/synthesis/runs/{{ run_id }}/category-integration?component_key={{ component.key }}">
+			<strong>{{ component.label }}</strong>
+			{% if component.approved %}
+				<span class="status-pill success">کتابخانهٔ تأییدشده · نسخه {{ component.approved_result.version }}</span>
+				{% if component.latest and component.latest.version > component.approved_result.version %}
+					{% if component.latest.status == 'invalid' %}<span class="status-pill warning">نسخهٔ جدید نیازمند اصلاح</span>
+					{% elif component.stale %}<span class="status-pill warning">نسخهٔ جدید منقضی</span>
+					{% else %}<span class="status-pill">نسخهٔ جدید در بازبینی</span>{% endif %}
+				{% endif %}
+			{% elif component.latest and component.stale %}<span class="status-pill warning">ورودی تغییر کرده</span>
+			{% elif component.latest and component.latest.status == 'invalid' %}<span class="status-pill warning">نیازمند اصلاح</span>
+			{% elif component.latest %}<span class="status-pill">در انتظار بررسی</span>
+			{% else %}<span class="status-pill">شروع‌نشده</span>{% endif %}
+		</a>
+	{% endfor %}
+	</nav>
+</section>
+
+<section class="panel">
+	<p class="eyebrow">{{ active_prompt.component_label }}</p>
+	<h2>ورودی این اجرای مستقل</h2>
+	<p>{{ active_prompt.source_items|length }} Source Item · {{ active_prompt.source_count }} مصاحبه · نسخهٔ Pool: {{ active_prompt.pool_version }}</p>
+	{% if active_prompt.source_items %}
+	<div class="integration-items">
+		{% for item in active_prompt.source_items %}
+		<article class="review-card">
+			<strong>{{ item.researcher_approved_category_name or item.original_category_name or 'مقوله بدون عنوان' }}</strong>
+			<small>{{ item.source_title or 'مصاحبه' }} · <code>{{ item.source_item_id }}</code></small>
+			{% if item.definition %}<p>{{ item.definition }}</p>{% endif %}
+			<details><summary>مفاهیم و شواهد</summary>
+				<ul>{% for concept in item.source_concepts %}<li>{{ concept.text or 'مفهوم بدون متن' }}</li>{% else %}<li>مفهوم تأییدشده‌ای پیوند نخورده است.</li>{% endfor %}</ul>
+				{% for reference in item.evidence_refs %}{% set evidence = evidence_by_id.get(reference.evidence_ref_id, {}) %}
+				<blockquote>{{ evidence.quote or 'متن شاهد موجود نیست' }}{% if evidence.interpretation %}<small>{{ evidence.interpretation }}</small>{% endif %}</blockquote>
+				{% endfor %}
+			</details>
+		</article>
+		{% endfor %}
+	</div>
+	{% else %}<p class="alert alert-warning">برای این مؤلفه Source Item معتبری در ورودی وجود ندارد؛ خروجی Markdown باید مقوله‌ها را NONE اعلام کند.</p>{% endif %}
+</section>
+
+<section class="panel">
+	<label for="category-integration-prompt">پرامپت Markdown این مؤلفه</label>
+	<textarea id="category-integration-prompt" rows="18" readonly>{{ active_prompt.prompt_text }}</textarea>
+	<div class="prompt-actions">
+		<a class="button button-secondary" href="/synthesis/runs/{{ run_id }}/category-integration/prompt.md?component_key={{ active_component_key }}">دانلود پرامپت Markdown</a>
+		<button type="button" class="button button-secondary" data-copy-category-integration-prompt>کپی پرامپت</button>
+	</div>
+</section>
+
+<section class="panel">
+	<h2>ثبت خروجی Markdown</h2>
+	<p>خروجی معتبر پس از اعتبارسنجی، به‌طور خودکار وارد کتابخانه می‌شود؛ اصلاح مقوله‌ها اختیاری است.</p>
+	{% if latest and latest.stale %}<p class="alert alert-warning">ورودی این مؤلفه تغییر کرده است؛ خروجی قبلی قابل تأیید نیست.</p>{% endif %}
+	{% if latest and latest.status == 'invalid' %}<div class="alert alert-warning" role="alert"><strong>خروجی نیازمند اصلاح است</strong><pre>{{ latest.validation_report_text }}</pre></div>{% endif %}
+	<form method="post" action="/synthesis/runs/{{ run_id }}/category-integration/results" enctype="multipart/form-data">
+		<input type="hidden" name="component_key" value="{{ active_component_key }}">
+		<label for="category-integration-output">خروجی را جای‌گذاری کنید</label>
+		<textarea id="category-integration-output" name="raw_output_text" rows="12" dir="ltr" spellcheck="false" placeholder="# COMPONENT SYNTHESIS RESULT"></textarea>
+		<label>یا انتخاب فایل خروجی Markdown<input type="file" name="markdown_file" accept=".md,.markdown,text/markdown"></label>
+		<button class="button button-primary" type="submit">Parse و اعتبارسنجی خروجی</button>
+	</form>
+</section>
+
+{% if latest %}
+<section class="panel">
+	<h2>تاریخچهٔ نسخه‌های این مؤلفه</h2>
+	<ul>{% for version in history|reverse %}
+		<li>نسخهٔ {{ version.version }} · {{ version.status }} · {{ version.approval_status }} · {{ version.created_at[:19] }}{% if version.stale %} · منقضی{% endif %}</li>
+	{% endfor %}</ul>
+</section>
+{% endif %}
+
+{% if latest and latest.validation_report_json.valid and not latest.stale %}
+{% set categories = latest.output_json.integrated_categories %}
+<section class="panel">
+	<h2>اصلاح اختیاری مقوله‌ها</h2>
+	{% if latest.validation_report_json.warnings %}
+	<div class="alert alert-warning"><strong>هشدارهای کیفیت</strong><ul>{% for warning in latest.validation_report_json.warnings %}<li>{{ warning }}</li>{% endfor %}</ul></div>
+	{% endif %}
+	{% for category in categories %}
+	<article class="panel review-card">
+		<h3>{{ category.title }}</h3>
+		<p>{{ category.definition }}</p>
+		<p>شناسه: <code>{{ category.category_id }}</code> · وضعیت: {{ category.review_status }}</p>
+		<ul>{% for item_id in category.source_item_ids %}
+			{% set item = source_items_by_id.get(item_id, {}) %}
+			<li>{{ item.researcher_approved_category_name or item.original_category_name or item_id }} — {{ item.source_title or '' }}, <code>{{ item_id }}</code>
+				<details><summary>شواهد و مفاهیم</summary>
+					<p>{{ item.definition or '' }}</p>
+					<ul>{% for concept in item.source_concepts %}<li>{{ concept.text or '' }}</li>{% endfor %}</ul>
+					{% for reference in item.evidence_refs %}{% set evidence = evidence_by_id.get(reference.evidence_ref_id, {}) %}
+					<blockquote>{{ evidence.quote or 'متن شاهد موجود نیست' }}{% if evidence.interpretation %}<small>{{ evidence.interpretation }}</small>{% endif %}</blockquote>
+					{% endfor %}
+				</details>
+			</li>
+		{% endfor %}</ul>
+		<form class="review-action" data-category-integration-review>
+			<input type="hidden" name="decision" value="edit_category">
+			<input type="hidden" name="component_key" value="{{ active_component_key }}">
+			<input type="hidden" name="category_id" value="{{ category.category_id }}">
+			<label>عنوان مقوله<input name="title" value="{{ category.title }}"></label>
+			<label>تعریف<textarea name="definition" rows="2">{{ category.definition }}</textarea></label>
+			<label>دلیل اصلاح<input name="reason" required></label>
+			<button class="button button-secondary" type="submit">ذخیره اصلاح</button>
+		</form>
+	</article>
+	{% else %}<p>برای ورودی خالی مقوله‌ای تولید نشده است.</p>{% endfor %}
+
+	{% if categories|length > 1 %}
+	<form class="review-action" data-category-integration-review>
+		<h3>ادغام دو مقوله</h3>
+		<input type="hidden" name="decision" value="merge_categories">
+		<input type="hidden" name="component_key" value="{{ active_component_key }}">
+		<label>مقولهٔ حفظ‌شونده<select name="category_id">{% for category in categories %}<option value="{{ category.category_id }}">{{ category.title }}</option>{% endfor %}</select></label>
+		<label>مقولهٔ ادغام‌شونده<select name="target_category_id">{% for category in categories %}<option value="{{ category.category_id }}">{{ category.title }}</option>{% endfor %}</select></label>
+		<label>عنوان نهایی اختیاری<input name="title"></label>
+		<label>تعریف نهایی اختیاری<textarea name="definition" rows="2"></textarea></label>
+		<label>دلیل ادغام<input name="reason" required></label>
+		<button class="button button-secondary" type="submit">ادغام</button>
+	</form>
+	{% endif %}
+
+	{% if categories %}
+	<form class="review-action" data-category-integration-review data-category-integration-split>
+		<h3>تقسیم مقوله</h3>
+		<input type="hidden" name="decision" value="split_category">
+		<input type="hidden" name="component_key" value="{{ active_component_key }}">
+		<label>مقوله<select name="category_id">{% for category in categories %}<option value="{{ category.category_id }}">{{ category.title }}</option>{% endfor %}</select></label>
+		<label>هر خط: شناسه‌های Source Item با کاما، سپس «| عنوان | تعریف»
+			<textarea name="partitions_text" rows="3" placeholder="source-id-1|عنوان اول|تعریف اول&#10;source-id-2|عنوان دوم|تعریف دوم"></textarea>
+		</label>
+		<label>دلیل تقسیم<input name="reason" required></label>
+		<button class="button button-secondary" type="submit">تقسیم مقوله</button>
+	</form>
+	{% endif %}
+
+	{% if categories|length > 1 %}
+	<form class="review-action" data-category-integration-review>
+		<h3>انتقال Source Item</h3>
+		<input type="hidden" name="decision" value="move_source_item">
+		<input type="hidden" name="component_key" value="{{ active_component_key }}">
+		<label>Source Item<select name="source_item_id">{% for category in categories %}{% for item_id in category.source_item_ids %}<option value="{{ item_id }}">{{ source_items_by_id.get(item_id, {}).researcher_approved_category_name or item_id }} · {{ category.title }}</option>{% endfor %}{% endfor %}</select></label>
+		<label>مقولهٔ مقصد<select name="target_category_id">{% for category in categories %}<option value="{{ category.category_id }}">{{ category.title }}</option>{% endfor %}</select></label>
+		<label>دلیل انتقال<input name="reason" required></label>
+		<button class="button button-secondary" type="submit">انتقال</button>
+	</form>
+	{% endif %}
+
+</section>
+{% endif %}
+{% endblock %}
+
+{% block scripts %}
+<script>
+	const copyCategoryIntegrationPrompt = document.querySelector('[data-copy-category-integration-prompt]');
+	if (copyCategoryIntegrationPrompt) {
+		copyCategoryIntegrationPrompt.addEventListener('click', async function () {
+			await navigator.clipboard.writeText(document.getElementById('category-integration-prompt').value);
+			copyCategoryIntegrationPrompt.textContent = 'کپی شد';
+		});
+	}
+	document.querySelectorAll('[data-category-integration-review]').forEach(function (form) {
+		form.addEventListener('submit', async function (event) {
+			event.preventDefault();
+			const formData = new FormData(form, event.submitter);
+			const payload = Object.fromEntries(formData.entries());
+			if (form.dataset.categoryIntegrationSplit !== undefined) {
+				payload.partitions = String(payload.partitions_text || '').split(/\r?\n/)
+					.map(function (line) {
+						const [ids = '', title = '', definition = ''] = line.split('|');
+						return {
+							source_item_ids: ids.split(',').map(function (item) { return item.trim(); }).filter(Boolean),
+							title: title.trim(),
+							definition: definition.trim()
+						};
+					})
+					.filter(function (partition) { return partition.source_item_ids.length; });
+				delete payload.partitions_text;
+			}
+			const response = await fetch(window.location.pathname + '/review', {
+				method: 'POST',
+				headers: {'Content-Type': 'application/json'},
+				body: JSON.stringify(payload)
+			});
+			const result = await response.json();
+			if (!response.ok) {
+				alert(result.detail || 'ثبت تصمیم ناموفق بود.');
+				return;
+			}
+			window.location.reload();
+		});
+	});
+</script>
+{% endblock %}

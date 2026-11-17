@@ -39,23 +39,27 @@
 </section>
 
 <section class="panel">
-	<label for="component-prompt">پرامپت آمادهٔ این مؤلفه</label>
+	<label for="component-prompt">پرامپت Markdown آمادهٔ این مؤلفه</label>
 	<textarea id="component-prompt" rows="18" readonly>{{ active_prompt.prompt_text }}</textarea>
-	<button type="button" class="button button-secondary" data-copy-component-prompt>کپی پرامپت</button>
+	<div class="prompt-actions">
+		<a class="button button-secondary" href="/synthesis/runs/{{ run_id }}/component-synthesis/prompt.md?component_key={{ active_component_key }}">دانلود پرامپت Markdown</a>
+		<button type="button" class="button button-secondary" data-copy-component-prompt>کپی پرامپت</button>
+	</div>
 </section>
 
 <section class="panel">
-	<h2>ثبت خروجی YAML</h2>
+	<h2>ثبت خروجی Markdown</h2>
 	<p>خروجی باید مقوله‌های تلفیقی را با Source Itemها تطبیق دهد و تم‌های کلان‌تر را تعریف کند.</p>
 	{% set latest = components|selectattr('key', 'equalto', active_component_key)|map(attribute='latest')|first %}
 	{% if latest and latest.status == 'invalid' %}<div class="alert alert-warning" role="alert"><strong>خروجی نیازمند اصلاح است</strong><pre>{{ latest.validation_report_text }}</pre></div>{% endif %}
-	<form method="post" action="/synthesis/runs/{{ run_id }}/component-synthesis/results">
+	<form method="post" action="/synthesis/runs/{{ run_id }}/component-synthesis/results" enctype="multipart/form-data">
 		<input type="hidden" name="component_key" value="{{ active_component_key }}">
-		<label for="component-output">خروجی را جای‌گذاری کنید</label>
-		<textarea id="component-output" name="raw_output_text" rows="16" placeholder="run_id: ...&#10;component_key: ...&#10;input_hash: ...&#10;integrated_categories: []&#10;themes: []" required></textarea>
+		<label for="component-output">خروجی Markdown را جای‌گذاری کنید</label>
+		<textarea id="component-output" name="raw_output_text" rows="16" dir="ltr" spellcheck="false" placeholder="# COMPONENT SYNTHESIS RESULT"></textarea>
+		<label>یا انتخاب فایل خروجی Markdown<input type="file" name="markdown_file" accept=".md,.markdown,text/markdown"></label>
 		{% set active_component = components|selectattr('key', 'equalto', active_component_key)|first %}
 		{% if active_component.stale %}<p class="alert alert-warning">ورودی این ظرف تغییر کرده است؛ خروجی قبلی دیگر معتبر نیست و باید دوباره ثبت شود.</p>{% endif %}
-		<button class="button button-primary" type="submit">تأیید و ذخیره این مرحله</button>
+		<button class="button button-primary" type="submit">Parse، اعتبارسنجی و ذخیره این مرحله</button>
 	</form>
 </section>
 {% endif %}

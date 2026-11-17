@@ -18,15 +18,19 @@ def _get_approved_edit(snapshot: dict[str, Any], category_id: str) -> dict[str, 
     return value if isinstance(value, dict) else {}
 
 
-def _approved_concept_ids(snapshot: dict[str, Any]) -> set[str]:
+def _approved_concept_ids(snapshot: dict[str, Any], *, fallback: list[str] | None = None) -> set[str]:
     edits = (snapshot.get("researcher_edits") or {}).get("concept_reviews") or {}
-    if not isinstance(edits, dict):
-        return set()
-    return {
-        str(concept_id)
-        for concept_id, edit in edits.items()
-        if isinstance(edit, dict) and edit.get("confirmed") is True
-    }
+    if isinstance(edits, dict):
+        approved = {
+            str(concept_id)
+            for concept_id, edit in edits.items()
+            if isinstance(edit, dict) and edit.get("confirmed") is True
+        }
+        if approved:
+            return approved
+    if fallback is not None:
+        return {str(concept_id) for concept_id in dict.fromkeys(fallback) if str(concept_id).strip()}
+    return set()
 
 
 def _approved_concepts(snapshot: dict[str, Any], concept_ids: list[str]) -> list[dict[str, str]]:
@@ -77,10 +81,11 @@ def build_category_source_item(
     category_id = str(category.get("category_id") or "")
     edit = _get_approved_edit(snapshot, category_id)
     model_concept_ids, raw_model_items = _reference_values(references)
-    approved_concept_ids = _approved_concept_ids(snapshot)
+    fallback_concept_ids = string_ids(category.get("concept_ids")) + model_concept_ids
+    approved_concept_ids = _approved_concept_ids(snapshot, fallback=fallback_concept_ids)
     concept_ids = [
         concept_id
-        for concept_id in dict.fromkeys(string_ids(category.get("concept_ids")) + model_concept_ids)
+        for concept_id in dict.fromkeys(fallback_concept_ids)
         if concept_id in approved_concept_ids
     ]
     subcategories = as_list(category.get("subcategories"))
@@ -141,17 +146,18 @@ def build_phenomenon_source_item(
     phenomenon_edit = edits.get("central_phenomenon") if edits.get("confirmed") else None
     phenomenon_edit = phenomenon_edit if isinstance(phenomenon_edit, dict) else {}
     evidence = [item for item in source.get("evidence", []) if item["evidence_ref_id"] in evidence_ref_ids]
-    approved_concept_ids = _approved_concept_ids(snapshot)
-    concepts = [
-        concept_id
-        for concept_id in dict.fromkeys(
+    fallback_concept_ids = list(dict.fromkeys(
         string_ids(phenomenon.get("supporting_concept_ids"))
         + [
             concept_id
             for category_id in category_ids
             for concept_id in string_ids(categories_by_id.get(category_id, {}).get("concept_ids"))
         ]
-        )
+    ))
+    approved_concept_ids = _approved_concept_ids(snapshot, fallback=fallback_concept_ids)
+    concepts = [
+        concept_id
+        for concept_id in fallback_concept_ids
         if concept_id in approved_concept_ids
     ]
     return {

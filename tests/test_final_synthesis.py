@@ -21,6 +21,7 @@ from app.services.synthesis.theme_synthesis_prompt import build_theme_synthesis_
 from app.services.synthesis.theme_synthesis_service import submit_theme_synthesis_output
 from app.services.synthesis.final_synthesis_service import (
     build_final_model,
+    final_model_page_data,
     latest_final_model,
     record_phenomenon_review_decision,
     record_relationship_review_decision,
@@ -567,6 +568,20 @@ def test_final_synthesis_review_and_model_traceability(monkeypatch, tmp_path):
     assert page.status_code == 200
     assert "نمودار مدل نهایی" in page.text
     assert "final-model/export/svg" in page.text
+    node_id = model["nodes"][0]["node_id"]
+    layout_response = TestClient(app).post(
+        f"/synthesis/runs/{run['run_id']}/final-model/layout",
+        json={"positions": {node_id: {"x": 24, "y": -12}}},
+    )
+    assert layout_response.status_code == 200
+    assert final_model_page_data(run["run_id"])["layout_positions"] == {
+        node_id: {"x": 24.0, "y": -12.0}
+    }
+    invalid_layout_response = TestClient(app).post(
+        f"/synthesis/runs/{run['run_id']}/final-model/layout",
+        json={"positions": {"unknown-node": {"x": 24, "y": -12}}},
+    )
+    assert invalid_layout_response.status_code == 409
     monkeypatch.setattr(synthesis_router, "render_paradigm_diagram", lambda _diagram, _format: b"image")
     svg = TestClient(app).get(
         f"/synthesis/runs/{run['run_id']}/final-model/export/svg"
@@ -595,7 +610,10 @@ def test_relationship_manual_add_rejects_unknown_nodes(monkeypatch, tmp_path):
     _approve_phase_four(run["run_id"], pool)
     _approve_phase_five(run["run_id"])
     phenomenon_prompt = build_phenomenon_prompt(run["run_id"])
-    submit_phenomenon_output(run["run_id"], _phenomenon_markdown(phenomenon_prompt))
+    submit_phenomenon_output(
+        run["run_id"],
+        f"```markdown\n{_phenomenon_markdown(phenomenon_prompt)}\n```",
+    )
     record_phenomenon_review_decision(
         run["run_id"], decision="approve_phenomenon", reason="تأیید"
     )
@@ -603,7 +621,9 @@ def test_relationship_manual_add_rejects_unknown_nodes(monkeypatch, tmp_path):
         run["run_id"], decision="approve_final", reason="تأیید نهایی"
     )
     prompt = build_relationship_prompt(run["run_id"])
-    submitted = submit_relationship_output(run["run_id"], _relationship_markdown(prompt))
+    submitted = submit_relationship_output(
+        run["run_id"], f"```markdown\n{_relationship_markdown(prompt)}\n```"
+    )
     assert submitted["valid"]
 
     try:

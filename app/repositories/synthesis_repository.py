@@ -419,19 +419,28 @@ def update_run_status(
 	return get_synthesis_run(run_id)
 
 
-def mark_stage_results_stale(run_id: str, stage_keys: tuple[str, ...]) -> None:
+def mark_stage_results_stale(
+	run_id: str,
+	stage_keys: tuple[str, ...],
+	*,
+	component_key: str | None = None,
+) -> None:
 	if not stage_keys:
 		return
 	init_db()
 	placeholders = ", ".join("?" for _ in stage_keys)
+	component_filter = " AND component_key = ?" if component_key is not None else ""
+	parameters: tuple[Any, ...] = (_now(), run_id, *stage_keys)
+	if component_key is not None:
+		parameters += (component_key,)
 	with _connect() as connection:
 		connection.execute(
 			f"""
 			UPDATE synthesis_stage_results
 			SET status = 'stale', approval_status = 'stale', updated_at = ?
-			WHERE run_id = ? AND stage_key IN ({placeholders})
+			WHERE run_id = ? AND stage_key IN ({placeholders}){component_filter}
 			""",
-			(_now(), run_id, *stage_keys),
+			parameters,
 		)
 
 
@@ -452,7 +461,9 @@ def mark_synthesis_runs_stale_for_source(source_project_id: str) -> list[str]:
 		stage_keys = (
 			"pool_extraction",
 			"component_synthesis",
+			"category_integration",
 			"category_grouping",
+			"theme_abstraction",
 			"theme_synthesis",
 			"phenomenon_synthesis",
 			"relationship_synthesis",

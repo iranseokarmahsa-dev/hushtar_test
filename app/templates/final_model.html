@@ -2,7 +2,7 @@
 {% block title %}مدل نهایی | نظریه‌یار{% endblock %}
 {% block content %}
 <section class="page-heading">
-	<div><p class="eyebrow">فاز هفتم · مدل پارادایمی نهایی</p><h1>مدل پارادایمی تلفیقی</h1><p>Run: <code>{{ run_id }}</code></p></div>
+	<div><p class="eyebrow">{% if latest and latest.output_json.source_phase_versions.theme_abstraction %}مرحلهٔ ۵ · مدل پارادایمی نهایی{% else %}فاز هفتم · مدل پارادایمی نهایی{% endif %}</p><h1>مدل پارادایمی تلفیقی</h1><p>Run: <code>{{ run_id }}</code></p></div>
 	<div class="page-actions">
 		<a class="button button-secondary" href="/synthesis/runs">همه اجراها</a>
 		<a class="button button-secondary" href="/synthesis/runs/{{ run_id }}/phenomenon-synthesis">پدیده محوری</a>
@@ -27,6 +27,9 @@
 		<button class="button button-secondary" type="button" data-zoom="out" aria-label="کوچک‌نمایی نمودار">−</button>
 		<button class="button button-secondary" type="button" data-zoom="fit">نمایش کامل</button>
 		<button class="button button-secondary" type="button" data-zoom="in" aria-label="بزرگ‌نمایی نمودار">+</button>
+		<button class="button button-secondary" type="button" data-layout-edit-toggle>ویرایش چیدمان</button>
+		<button class="button button-secondary" type="button" data-layout-save>ذخیره چیدمان</button>
+		<button class="button button-secondary" type="button" data-layout-reset>بازنشانی چیدمان</button>
 		<a class="button button-secondary" href="/synthesis/runs/{{ run_id }}/final-model/export/png">دریافت PNG</a>
 		<a class="button button-secondary" href="/synthesis/runs/{{ run_id }}/final-model/export/svg">دریافت SVG</a>
 		<button class="button button-secondary" type="button" data-print>چاپ / PDF</button>
@@ -47,7 +50,7 @@
 					<div class="paradigm-node-heading"><strong>{{ node.label }}</strong></div>
 					<div class="paradigm-node-items">
 						{% for item in node["items"] %}
-						<button type="button" class="paradigm-node-item paradigm-entity-node" id="paradigm-node-{{ item.id }}" aria-label="جزئیات {{ item.title }}">
+						<button type="button" class="paradigm-node-item paradigm-entity-node" id="paradigm-node-{{ item.id }}" data-node-id="{{ item.id }}" aria-label="جزئیات {{ item.title }}">
 							<strong>{{ item.title }}</strong>
 							<small>{{ item.node_type }}</small>
 							<small class="diagram-ids">{{ item.id }}</small>
@@ -91,6 +94,7 @@
 </section>
 {% endif %}
 <script type="application/json" id="paradigm-data">{{ diagram|tojson }}</script>
+<script type="application/json" id="paradigm-layout-data">{{ layout_positions|tojson }}</script>
 {% endif %}
 {% if coding_table %}{% set export_base = '/synthesis/runs/' ~ run_id ~ '/final-model/coding-table' %}{% include "_coding_table.html" %}{% endif %}
 {% if can_build %}

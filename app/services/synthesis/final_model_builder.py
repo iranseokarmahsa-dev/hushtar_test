@@ -235,13 +235,29 @@ def build_final_model_data(
             ],
         })
 
-    source_phase_versions = {
-        "pool_extraction": inputs["pool_version"],
-        "category_grouping": inputs["phase_five_result"].get("source_phase_version"),
-        "theme_synthesis": inputs["phase_five_result"]["version"],
-        "phenomenon_synthesis": phenomenon_result["version"],
-        "relationship_synthesis": relationship_result["version"],
-    }
+    phase_five_result = inputs["phase_five_result"]
+    if phase_five_result.get("stage_key") == "theme_abstraction":
+        source_phase_versions = {
+            "pool_extraction": inputs["pool_version"],
+            "category_integration": {
+                item["component_key"]: item["version"]
+                for item in phase_five_result.get("stage_versions", [])
+            },
+            "theme_abstraction": {
+                item["component_key"]: item["theme_version"]
+                for item in phase_five_result.get("stage_versions", [])
+            },
+            "phenomenon_synthesis": phenomenon_result["version"],
+            "relationship_synthesis": relationship_result["version"],
+        }
+    else:
+        source_phase_versions = {
+            "pool_extraction": inputs["pool_version"],
+            "category_grouping": phase_five_result.get("source_phase_version"),
+            "theme_synthesis": phase_five_result["version"],
+            "phenomenon_synthesis": phenomenon_result["version"],
+            "relationship_synthesis": relationship_result["version"],
+        }
     contradictions = [
         {
             "stage_key": stage_key,

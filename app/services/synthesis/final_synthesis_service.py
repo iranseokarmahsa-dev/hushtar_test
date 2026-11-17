@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from copy import deepcopy
 from datetime import datetime, timezone
+import math
 from typing import Any
 from uuid import uuid4
 
@@ -44,6 +45,9 @@ from app.services.synthesis.relationship_prompt_builder import (
     build_relationship_prompt,
     latest_relationship_result,
 )
+
+FINAL_MODEL_LAYOUT_STAGE_KEY = "final_model_layout"
+
 
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
@@ -944,6 +948,19 @@ def final_model_page_data(run_id: str) -> dict[str, Any]:
         page_error = str(error)
     latest = latest_final_model(run_id)
     latest_is_current = bool(latest and not latest.get("stale"))
+    layout_positions: dict[str, dict[str, float]] = {}
+    if latest_is_current:
+        layout_results = [
+            item for item in list_stage_results(run_id)
+            if item["stage_key"] == FINAL_MODEL_LAYOUT_STAGE_KEY
+            and item["component_key"] == FINAL_MODEL_COMPONENT_KEY
+            and item.get("input_hash") == latest.get("input_hash")
+            and (item.get("output_json") or {}).get("model_result_id")
+            == latest.get("stage_result_id")
+        ]
+        if layout_results:
+            layout = max(layout_results, key=lambda item: item["version"])
+            layout_positions = (layout.get("output_json") or {}).get("positions", {})
     return {
         "run_id": run_id,
         "inputs": inputs,
@@ -955,4 +972,60 @@ def final_model_page_data(run_id: str) -> dict[str, Any]:
         "can_build": can_build,
         "input_hash": model.get("input_hash", "") if model else "",
         "page_error": page_error,
+        "layout_positions": layout_positions,
     }
+
+
+def save_final_model_layout(
+    run_id: str,
+    positions: dict[str, dict[str, float]],
+) -> dict[str, Any]:
+    latest = latest_final_model(run_id)
+    if latest is None or latest.get("stale") or latest.get("approval_status") != "approved":
+        raise ValueError("فقط چیدمان مدل نهایی معتبر و تأییدشده قابل ذخیره است.")
+    model = latest.get("output_json") or {}
+    allowed_node_ids = {str(item["node_id"]) for item in model.get("nodes", [])}
+    if not isinstance(positions, dict):
+        raise ValueError("ساختار جایگاه‌های نمودار معتبر نیست.")
+    normalized: dict[str, dict[str, float]] = {}
+    for node_id, position in positions.items():
+        if node_id not in allowed_node_ids or not isinstance(position, dict):
+            raise ValueError("نود یا جایگاه نمودار در Snapshot جاری معتبر نیست.")
+        if set(position) != {"x", "y"}:
+            raise ValueError("هر جایگاه باید فقط شامل مختصات x و y باشد.")
+        try:
+            x = float(position["x"])
+            y = float(position["y"])
+        except (TypeError, ValueError) as error:
+            raise ValueError("مختصات جایگاه نمودار باید عددی باشد.") from error
+        if (
+            not math.isfinite(x)
+            or not math.isfinite(y)
+            or abs(x) > 1000
+            or abs(y) > 1000
+        ):
+            raise ValueError("مختصات جایگاه نمودار خارج از محدودهٔ مجاز است.")
+        normalized[node_id] = {"x": round(x, 2), "y": round(y, 2)}
+
+    version = get_next_stage_version(
+        run_id, FINAL_MODEL_LAYOUT_STAGE_KEY, FINAL_MODEL_COMPONENT_KEY
+    )
+    return save_stage_result(
+        run_id,
+        FINAL_MODEL_LAYOUT_STAGE_KEY,
+        FINAL_MODEL_COMPONENT_KEY,
+        version=version,
+        status="approved",
+        input_hash=latest["input_hash"],
+        prompt_text="",
+        raw_output_text="",
+        output_json={
+            "model_result_id": latest["stage_result_id"],
+            "positions": normalized,
+        },
+        validation_report_json={"valid": True, "position_count": len(normalized)},
+        validation_report_text="چیدمان بصری نودها ذخیره شد.",
+        source_phase_version=latest["version"],
+        researcher_edits_json={"operation": "save_visual_layout"},
+        approval_status="approved",
+    )

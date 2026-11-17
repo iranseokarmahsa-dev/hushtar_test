@@ -35,3 +35,5 @@
 در QUALITY AUDIT به‌ترتیب: `input_source_count`, `input_phenomenon_count`, `reviewed_source_phenomenon_ids`, `reviewed_node_ids`, `input_theme_count`, `input_category_unit_count`, `supporting_reference_count`, `missing_supporting_references`, `unsupported_claims`, `contradictions`, `analysis_limitations`, `final_status`. در دو فهرست مرور، هر شناسه ورودی را دقیقاً یک‌بار ثبت کن.
 
 {{FORMAT_CONTRACT}}
+
+کل سند خروجی را درون یک بلوک کد واحد با سه علامت بک‌تیک قرار بده و هیچ متنی بیرون از بلوک ننویس.

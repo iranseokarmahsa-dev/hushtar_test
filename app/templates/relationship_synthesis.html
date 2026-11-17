@@ -2,7 +2,7 @@
 {% block title %}تلفیق روابط | نظریه‌یار{% endblock %}
 {% block content %}
 <section class="page-heading">
-	<div><p class="eyebrow">فاز ششم · روابط</p><h1>تحلیل و بازبینی روابط</h1><p>Run: <code>{{ latest.run_id if latest else prompt.run_id if prompt else '' }}</code></p></div>
+	<div><p class="eyebrow">{% if prompt and prompt.inputs.phase_five_result.stage_key == 'theme_abstraction' %}مرحلهٔ ۵ · روابط مدل پارادایمی{% else %}فاز ششم · روابط{% endif %}</p><h1>تحلیل و بازبینی روابط</h1><p>Run: <code>{{ latest.run_id if latest else prompt.run_id if prompt else '' }}</code></p></div>
 	<div class="page-actions">
 		<a class="button button-secondary" href="/synthesis/runs">همه اجراها</a>
 		<a class="button button-secondary" href="/synthesis/runs/{{ latest.run_id if latest else prompt.run_id if prompt else '' }}/phenomenon-synthesis">پدیده محوری</a>
@@ -14,7 +14,7 @@
 {% if prompt %}
 <section class="panel">
 	<h2>ورودی تأییدشده</h2>
-	<p>نسخه فاز پنجم: {{ prompt.source_phase_version }} · نسخه پدیده محوری: {{ prompt.phenomenon_version }} · نودها: {{ prompt.size_report.input_node_count }} · روابط مستقل: {{ prompt.size_report.source_relationship_count }}</p>
+	<p>{% if prompt.inputs.phase_five_result.stage_key == 'theme_abstraction' %}نسخهٔ مرحلهٔ ۴: {{ prompt.source_phase_version }}{% else %}نسخه فاز پنجم: {{ prompt.source_phase_version }}{% endif %} · نسخه پدیده محوری: {{ prompt.phenomenon_version }} · نودها: {{ prompt.size_report.input_node_count }} · روابط مستقل: {{ prompt.size_report.source_relationship_count }}</p>
 	<label>Prompt مستقل Markdown<textarea id="relationship-prompt" rows="16" readonly>{{ prompt.prompt_text }}</textarea></label><button type="button" class="button button-secondary" data-copy-prompt>کپی Prompt</button>
 	<h3>ثبت پاسخ AI</h3>
 	<form method="post" action="/synthesis/runs/{{ prompt.run_id }}/relationship-synthesis/results" enctype="multipart/form-data">

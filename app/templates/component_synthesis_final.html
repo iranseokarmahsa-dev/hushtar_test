@@ -27,6 +27,56 @@
 	</div>
 </section>
 
+<section class="panel analysis-diagram-section">
+	<div class="section-heading">
+		<div><p class="eyebrow">نمودار پارادایمی</p><h2>مدل پارادایمی تلفیقی شش‌مؤلفه‌ای</h2><p class="muted">چیدمان بر اساس ساختار مرحلهٔ سوم؛ تم‌ها و مقوله‌های ذخیره‌شده از شش گام نمایش داده می‌شوند.</p></div>
+		<div class="page-actions">
+			<button class="button button-secondary" type="button" data-zoom="out" aria-label="کوچک‌نمایی نمودار">−</button>
+			<button class="button button-secondary" type="button" data-zoom="fit">نمایش کامل</button>
+			<button class="button button-secondary" type="button" data-zoom="in" aria-label="بزرگ‌نمایی نمودار">+</button>
+			<button class="button button-secondary" type="button" data-print>چاپ / PDF</button>
+		</div>
+	</div>
+	<div class="paradigm-workspace">
+		<div class="paradigm-viewport" id="paradigm-viewport" aria-label="نمودار پارادایمی تلفیقی">
+			<div class="paradigm-zoom-content" id="paradigm-zoom-content">
+				<div class="paradigm-canvas" id="paradigm-canvas">
+					<svg class="paradigm-links" id="paradigm-links" aria-hidden="true">
+						<defs><marker id="paradigm-arrow" markerWidth="10" markerHeight="8" refX="8" refY="4" orient="auto"><path d="M0,0 L9,4 L0,8 Z" fill="context-stroke"></path></marker></defs>
+					</svg>
+					{% for node in diagram.nodes %}
+					<button type="button" class="paradigm-node paradigm-node-{{ node.id }}" id="paradigm-node-{{ node.id }}" data-node-id="{{ node.id }}" aria-pressed="false">
+						<span class="paradigm-node-heading"><strong>{{ node.label }}</strong></span>
+						{% if node["items"] %}
+						<span class="paradigm-node-items">
+							{% for item in node["items"] %}
+							<span class="paradigm-node-item">
+								<strong>{{ item.title }}</strong>
+								{% if item.description %}<small>{{ item.description }}</small>{% endif %}
+								{% if item.category_ids %}<small class="diagram-ids">مقوله‌ها: {{ item.category_ids|join('، ') }}</small>{% endif %}
+							</span>
+							{% endfor %}
+						</span>
+						{% else %}<span class="paradigm-node-empty">در این مؤلفه داده‌ای ثبت نشده است.</span>{% endif %}
+						<span class="paradigm-node-hint">برای مشاهده تم‌ها و مقوله‌ها کلیک کنید</span>
+					</button>
+					{% endfor %}
+				</div>
+			</div>
+		</div>
+		<aside class="paradigm-detail-panel panel" id="paradigm-detail" aria-live="polite">
+			<p class="eyebrow">جزئیات مؤلفه</p><h2>برای مشاهده جزئیات، یک مؤلفه را انتخاب کنید</h2>
+			<p class="muted">تم‌ها، مقوله‌ها و شناسه‌های آن‌ها در این بخش نمایش داده می‌شوند.</p>
+		</aside>
+	</div>
+	<div class="paradigm-legend" aria-label="راهنمای نمودار">
+		<span><i class="legend-line legend-structural"></i> پیوند ساختاری مدل پارادایمی</span>
+	</div>
+	<p class="paradigm-export-status" id="paradigm-export-status" role="status" aria-live="polite"></p>
+</section>
+
 {% set export_base = '/synthesis/runs/' ~ run_id ~ '/component-synthesis/final/coding-table' %}
 {% include "_coding_table.html" %}
+<script type="application/json" id="paradigm-data">{{ diagram|tojson }}</script>
 {% endblock %}
+{% block scripts %}<script src="/static/js/paradigm.js"></script>{% endblock %}

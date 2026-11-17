@@ -67,13 +67,28 @@ def validate_final_model(
         })
         model["quality_audit"]["status"] = "invalid"
 
-    expected_versions = {
-        "pool_extraction": inputs.get("pool_version"),
-        "category_grouping": inputs.get("phase_five_result", {}).get("source_phase_version"),
-        "theme_synthesis": inputs.get("phase_five_result", {}).get("version"),
-        "phenomenon_synthesis": phenomenon_result.get("version"),
-        "relationship_synthesis": relationship_result.get("version"),
-    }
+    phase_five_result = inputs.get("phase_five_result", {})
+    if phase_five_result.get("stage_key") == "theme_abstraction":
+        stage_versions = phase_five_result.get("stage_versions", [])
+        expected_versions = {
+            "pool_extraction": inputs.get("pool_version"),
+            "category_integration": {
+                item["component_key"]: item["version"] for item in stage_versions
+            },
+            "theme_abstraction": {
+                item["component_key"]: item["theme_version"] for item in stage_versions
+            },
+            "phenomenon_synthesis": phenomenon_result.get("version"),
+            "relationship_synthesis": relationship_result.get("version"),
+        }
+    else:
+        expected_versions = {
+            "pool_extraction": inputs.get("pool_version"),
+            "category_grouping": phase_five_result.get("source_phase_version"),
+            "theme_synthesis": phase_five_result.get("version"),
+            "phenomenon_synthesis": phenomenon_result.get("version"),
+            "relationship_synthesis": relationship_result.get("version"),
+        }
     source_versions = model.get("source_phase_versions", {})
     if any(source_versions.get(key) != value for key, value in expected_versions.items()):
         model.setdefault("quality_audit", {}).setdefault("errors", []).append({

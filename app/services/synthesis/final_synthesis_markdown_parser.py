@@ -4,6 +4,10 @@ import re
 from dataclasses import dataclass
 from typing import Any
 
+from app.services.synthesis.component_markdown_sanitizer import (
+    unwrap_outer_markdown_code_fence,
+)
+
 
 HEADING_RE = re.compile(r"^(#{1,6})\s+(.+?)\s*$")
 FIELD_RE = re.compile(r"^- ([a-z][a-z0-9_]*):(?:[ \t]*(.*))?$")
@@ -168,6 +172,7 @@ def _records(
 def parse_phenomenon_markdown(text: str) -> dict[str, Any]:
     if not isinstance(text, str) or not text.strip():
         raise FinalSynthesisMarkdownError(["سند Markdown خالی است."])
+    text = unwrap_outer_markdown_code_fence(text)
     headings = _headings(text, "FINAL PHENOMENON RESULT")
     _empty(headings[0].body, "عنوان اصلی")
     index = 1
@@ -240,6 +245,7 @@ def parse_phenomenon_markdown(text: str) -> dict[str, Any]:
 def parse_relationship_markdown(text: str) -> dict[str, Any]:
     if not isinstance(text, str) or not text.strip():
         raise FinalSynthesisMarkdownError(["سند Markdown خالی است."])
+    text = unwrap_outer_markdown_code_fence(text)
     headings = _headings(text, "FINAL RELATIONSHIP RESULT")
     _empty(headings[0].body, "عنوان اصلی")
     index = 1

@@ -238,7 +238,7 @@ def test_grouping_output_is_validated_and_versioned(monkeypatch, tmp_path):
     for source in get_run_sources(run["run_id"]):
         assert delete_project(source["source_project_id"])
     prompt = build_grouping_prompt(run["run_id"])
-    raw_output = _make_markdown(run["run_id"], prompt["input_hash"], pool)
+    raw_output = f"```markdown\n{_make_markdown(run['run_id'], prompt['input_hash'], pool)}\n```"
 
     result = submit_grouping_output(run["run_id"], raw_output)
 

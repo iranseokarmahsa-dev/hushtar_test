@@ -653,6 +653,7 @@ section[id], article[id], details[id] { scroll-margin-top: 16px; }
 .final-paradigm-component .paradigm-node-heading { font-size: 13px; }
 .final-paradigm-component .paradigm-node-items { gap: 4px; }
 .paradigm-entity-node { width: 100%; padding: 7px 0 0; border: 0; border-top: 1px solid rgba(57, 78, 64, .18); background: transparent; color: var(--ink); font: inherit; text-align: right; cursor: pointer; }
+.is-layout-editing .paradigm-entity-node { cursor: move; touch-action: none; user-select: none; }
 .paradigm-entity-node:hover { background: #f5f8f5; }
 .paradigm-entity-node:focus-visible { outline: 2px solid #426e59; outline-offset: 2px; }
 .paradigm-entity-node small { display: block; }

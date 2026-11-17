@@ -22,8 +22,26 @@ from app.services.synthesis.category_grouping_service import (
     submit_grouping_output,
 )
 from app.services.synthesis.category_grouping_prompt import PromptSizeLimitError
+from app.services.synthesis.category_integration_service import (
+    COMPONENT_LABELS as INTEGRATION_COMPONENT_LABELS,
+    build_category_integration_prompt,
+    category_integration_page_data,
+    submit_category_integration_output,
+)
+from app.services.synthesis.category_integration_review_service import (
+    record_category_integration_review_decision,
+)
+from app.services.synthesis.theme_abstraction_service import (
+    build_theme_abstraction_prompt,
+    submit_theme_abstraction_output,
+    theme_abstraction_page_data,
+)
+from app.services.synthesis.theme_abstraction_review_service import (
+    record_theme_abstraction_review_decision,
+)
 from app.services.synthesis.component_synthesis_service import (
     COMPONENTS as COMPONENT_SYNTHESIS_COMPONENTS,
+    build_component_prompt,
     component_synthesis_final_data,
     component_synthesis_page_data,
     submit_component_output,
@@ -48,6 +66,7 @@ from app.services.synthesis.final_synthesis_service import (
     record_relationship_review_decision,
     relationship_correction_prompt,
     relationship_page_data,
+    save_final_model_layout,
     submit_phenomenon_output,
     submit_relationship_output,
 )
@@ -149,6 +168,30 @@ class CategoryReviewDecision(BaseModel):
     partitions: list[dict[str, Any]] | None = None
 
 
+class CategoryIntegrationReviewDecision(BaseModel):
+    component_key: str
+    decision: str
+    reason: str
+    category_id: str | None = None
+    target_category_id: str | None = None
+    source_item_id: str | None = None
+    title: str | None = None
+    definition: str | None = None
+    partitions: list[dict[str, Any]] | None = None
+
+
+class ThemeAbstractionReviewDecision(BaseModel):
+    component_key: str
+    decision: str
+    reason: str
+    theme_id: str | None = None
+    target_theme_id: str | None = None
+    integrated_category_id: str | None = None
+    title: str | None = None
+    definition: str | None = None
+    partitions: list[dict[str, Any]] | None = None
+
+
 class ThemeReviewDecision(BaseModel):
     decision: str
     reason: str
@@ -191,6 +234,19 @@ class RelationshipReviewDecision(BaseModel):
     evidence_ref_ids: list[str] | None = None
 
 
+class FinalModelLayoutPayload(BaseModel):
+    positions: dict[str, dict[str, float]]
+
+
+def _project_eligibility(project: dict):
+    try:
+        return summarize_project_eligibility(project, require_pool_ready=True)
+    except TypeError as error:
+        if "require_pool_ready" not in str(error):
+            raise
+        return summarize_project_eligibility(project)
+
+
 @router.get("/select")
 def synthesis_select_page(request: Request):
     return RedirectResponse("/projects", status_code=303)
@@ -213,7 +269,7 @@ def create_synthesis_run_route(
         if "text/html" in request.headers.get("accept", ""):
             projects = list_projects()
             eligibility = {
-                project["project_id"]: summarize_project_eligibility(project, require_pool_ready=True)
+                project["project_id"]: _project_eligibility(project)
                 for project in projects
             }
             return templates.TemplateResponse(
@@ -245,6 +301,188 @@ def get_synthesis_pools(run_id: str):
         raise HTTPException(status_code=404, detail=str(error)) from error
 
 
+@router.get("/runs/{run_id}/category-integration")
+def category_integration_page(
+    request: Request,
+    run_id: str,
+    component_key: str = "causal_conditions",
+):
+    try:
+        context = category_integration_page_data(run_id, component_key)
+    except ValueError as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
+    return templates.TemplateResponse(
+        request=request,
+        name="category_integration.html",
+        context={"request": request, **context},
+    )
+
+
+@router.get("/runs/{run_id}/category-integration/prompt.md")
+def download_category_integration_prompt(run_id: str, component_key: str):
+    try:
+        prompt = build_category_integration_prompt(run_id, component_key)
+    except ValueError as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
+    return PlainTextResponse(
+        prompt["prompt_text"],
+        headers={
+            "Content-Disposition": (
+                f'attachment; filename="category-integration-{component_key}-{run_id[:8]}.md"'
+            )
+        },
+    )
+
+
+@router.post("/runs/{run_id}/category-integration/results")
+async def submit_category_integration_result(
+    run_id: str,
+    component_key: str = Form(...),
+    raw_output_text: str = Form(""),
+    markdown_file: UploadFile | None = File(None),
+):
+    if component_key not in INTEGRATION_COMPONENT_LABELS:
+        raise HTTPException(status_code=400, detail="مؤلفهٔ درخواستی معتبر نیست.")
+    if markdown_file is not None and markdown_file.filename:
+        if raw_output_text.strip():
+            raise HTTPException(status_code=400, detail="متن را جای‌گذاری کنید یا فایل Markdown بدهید، نه هر دو.")
+        if not markdown_file.filename.lower().endswith((".md", ".markdown")):
+            raise HTTPException(status_code=400, detail="فقط فایل Markdown با پسوند md یا markdown پذیرفته می‌شود.")
+        content = await markdown_file.read(5 * 1024 * 1024 + 1)
+        if len(content) > 5 * 1024 * 1024:
+            raise HTTPException(status_code=413, detail="حجم فایل Markdown باید کمتر از ۵ مگابایت باشد.")
+        try:
+            raw_output_text = content.decode("utf-8-sig")
+        except UnicodeDecodeError as error:
+            raise HTTPException(status_code=400, detail="فایل Markdown باید با کدگذاری UTF-8 باشد.") from error
+    try:
+        submit_category_integration_output(run_id, component_key, raw_output_text)
+    except ValueError as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
+    return RedirectResponse(
+        f"/synthesis/runs/{run_id}/category-integration?component_key={component_key}",
+        status_code=303,
+    )
+
+
+@router.post("/runs/{run_id}/category-integration/review")
+def submit_category_integration_review(
+    run_id: str,
+    decision: CategoryIntegrationReviewDecision,
+):
+    try:
+        result = record_category_integration_review_decision(
+            run_id,
+            component_key=decision.component_key,
+            decision=decision.decision,
+            reason=decision.reason,
+            category_id=decision.category_id,
+            target_category_id=decision.target_category_id,
+            source_item_id=decision.source_item_id,
+            title=decision.title,
+            definition=decision.definition,
+            partitions=decision.partitions,
+        )
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
+    return JSONResponse({
+        "stage_result_id": result["stage_result_id"],
+        "version": result["version"],
+        "status": result["status"],
+        "approval_status": result["approval_status"],
+    })
+
+
+@router.get("/runs/{run_id}/theme-abstraction")
+def theme_abstraction_page(
+    request: Request,
+    run_id: str,
+    component_key: str = "causal_conditions",
+):
+    try:
+        context = theme_abstraction_page_data(run_id, component_key)
+    except ValueError as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
+    return templates.TemplateResponse(
+        request=request,
+        name="theme_abstraction.html",
+        context={"request": request, **context},
+    )
+
+
+@router.get("/runs/{run_id}/theme-abstraction/prompt.md")
+def download_theme_abstraction_prompt(run_id: str, component_key: str):
+    try:
+        prompt = build_theme_abstraction_prompt(run_id, component_key)
+    except ValueError as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
+    return PlainTextResponse(
+        prompt["prompt_text"],
+        headers={
+            "Content-Disposition": (
+                f'attachment; filename="theme-abstraction-{component_key}-{run_id[:8]}.md"'
+            )
+        },
+    )
+
+
+@router.post("/runs/{run_id}/theme-abstraction/results")
+async def submit_theme_abstraction_result(
+    run_id: str,
+    component_key: str = Form(...),
+    raw_output_text: str = Form(""),
+    markdown_file: UploadFile | None = File(None),
+):
+    if markdown_file is not None and markdown_file.filename:
+        if raw_output_text.strip():
+            raise HTTPException(status_code=400, detail="متن را جای‌گذاری کنید یا فایل Markdown بدهید، نه هر دو.")
+        if not markdown_file.filename.lower().endswith((".md", ".markdown")):
+            raise HTTPException(status_code=400, detail="فقط فایل Markdown با پسوند md یا markdown پذیرفته می‌شود.")
+        content = await markdown_file.read(5 * 1024 * 1024 + 1)
+        if len(content) > 5 * 1024 * 1024:
+            raise HTTPException(status_code=413, detail="حجم فایل Markdown باید کمتر از ۵ مگابایت باشد.")
+        try:
+            raw_output_text = content.decode("utf-8-sig")
+        except UnicodeDecodeError as error:
+            raise HTTPException(status_code=400, detail="فایل Markdown باید با کدگذاری UTF-8 باشد.") from error
+    try:
+        submit_theme_abstraction_output(run_id, component_key, raw_output_text)
+    except ValueError as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
+    return RedirectResponse(
+        f"/synthesis/runs/{run_id}/theme-abstraction?component_key={component_key}",
+        status_code=303,
+    )
+
+
+@router.post("/runs/{run_id}/theme-abstraction/review")
+def submit_theme_abstraction_review(
+    run_id: str,
+    decision: ThemeAbstractionReviewDecision,
+):
+    try:
+        result = record_theme_abstraction_review_decision(
+            run_id,
+            component_key=decision.component_key,
+            decision=decision.decision,
+            reason=decision.reason,
+            theme_id=decision.theme_id,
+            target_theme_id=decision.target_theme_id,
+            integrated_category_id=decision.integrated_category_id,
+            title=decision.title,
+            definition=decision.definition,
+            partitions=decision.partitions,
+        )
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
+    return JSONResponse({
+        "stage_result_id": result["stage_result_id"],
+        "version": result["version"],
+        "status": result["status"],
+        "approval_status": result["approval_status"],
+    })
+
+
 @router.get("/runs/{run_id}/component-synthesis")
 def component_synthesis_page(request: Request, run_id: str):
     try:
@@ -260,12 +498,41 @@ def component_synthesis_page(request: Request, run_id: str):
     )
 
 
+@router.get("/runs/{run_id}/component-synthesis/prompt.md")
+def download_component_synthesis_prompt(run_id: str, component_key: str):
+    try:
+        prompt = build_component_prompt(run_id, component_key)
+    except ValueError as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
+    return PlainTextResponse(
+        prompt["prompt_text"],
+        headers={
+            "Content-Disposition": (
+                f'attachment; filename="component-{component_key}-{run_id[:8]}.md"'
+            )
+        },
+    )
+
+
 @router.post("/runs/{run_id}/component-synthesis/results")
-def submit_component_synthesis_result(
+async def submit_component_synthesis_result(
     run_id: str,
     component_key: str = Form(...),
     raw_output_text: str = Form(""),
+    markdown_file: UploadFile | None = File(None),
 ):
+    if markdown_file is not None and markdown_file.filename:
+        if raw_output_text.strip():
+            raise HTTPException(status_code=400, detail="متن را جای‌گذاری کنید یا فایل Markdown بدهید، نه هر دو.")
+        if not markdown_file.filename.lower().endswith((".md", ".markdown")):
+            raise HTTPException(status_code=400, detail="فقط فایل Markdown با پسوند md یا markdown پذیرفته می‌شود.")
+        content = await markdown_file.read(5 * 1024 * 1024 + 1)
+        if len(content) > 5 * 1024 * 1024:
+            raise HTTPException(status_code=413, detail="حجم فایل Markdown باید کمتر از ۵ مگابایت باشد.")
+        try:
+            raw_output_text = content.decode("utf-8-sig")
+        except UnicodeDecodeError as error:
+            raise HTTPException(status_code=400, detail="فایل Markdown باید با کدگذاری UTF-8 باشد.") from error
     try:
         submit_component_output(run_id, component_key, raw_output_text)
     except ValueError as error:
@@ -631,6 +898,19 @@ def final_model_page(request: Request, run_id: str):
         name="final_model.html",
         context={"request": request, **context, "diagram": diagram, "coding_table": coding_table},
     )
+
+
+@router.post("/runs/{run_id}/final-model/layout")
+def save_final_model_layout_route(run_id: str, payload: FinalModelLayoutPayload):
+    try:
+        result = save_final_model_layout(run_id, payload.positions)
+    except ValueError as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
+    return JSONResponse({
+        "version": result["version"],
+        "status": result["status"],
+        "approval_status": result["approval_status"],
+    })
 
 
 @router.get("/runs/{run_id}/final-model/coding-table.{fmt}")

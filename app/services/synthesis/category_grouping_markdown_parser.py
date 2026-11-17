@@ -3,6 +3,9 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
+from app.services.synthesis.component_markdown_sanitizer import (
+    unwrap_outer_markdown_code_fence,
+)
 from app.services.synthesis.reference_mapper import POOL_COMPONENT_KEYS
 
 HEADING_RE = re.compile(r"^(#{1,6})\s+(.+?)\s*$")
@@ -151,6 +154,7 @@ def _require_empty_or_none(body: str, context: str) -> None:
 def parse_category_grouping_markdown(text: str) -> dict[str, object]:
     if not isinstance(text, str) or not text.strip():
         raise CategoryGroupingMarkdownError(["سند Markdown خالی است."])
+    text = unwrap_outer_markdown_code_fence(text)
     headings = _headings(text)
     _require_empty_or_none(headings[0].body, "عنوان اصلی")
     index = 1

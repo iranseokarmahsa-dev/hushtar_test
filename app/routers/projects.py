@@ -13,6 +13,15 @@ router = APIRouter(prefix="/projects", tags=["projects"])
 templates = Jinja2Templates(directory="app/templates")
 
 
+def _project_eligibility(project: dict):
+	try:
+		return summarize_project_eligibility(project, require_pool_ready=True)
+	except TypeError as error:
+		if "require_pool_ready" not in str(error):
+			raise
+		return summarize_project_eligibility(project)
+
+
 def _project_or_404(project_id: str):
 	project = get_project(project_id)
 	if project is None:
@@ -24,7 +33,7 @@ def _project_or_404(project_id: str):
 def projects_page(request: Request):
 	projects = list_projects()
 	eligibility = {
-		project["project_id"]: summarize_project_eligibility(project, require_pool_ready=True)
+		project["project_id"]: _project_eligibility(project)
 		for project in projects
 	}
 	return templates.TemplateResponse(

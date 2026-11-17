@@ -4,6 +4,9 @@ import re
 from dataclasses import dataclass
 from typing import Any
 
+from app.services.synthesis.component_markdown_sanitizer import (
+    unwrap_outer_markdown_code_fence,
+)
 from app.services.synthesis.reference_mapper import POOL_COMPONENT_KEYS
 
 HEADING_RE = re.compile(r"^(#{1,6})\s+(.+?)\s*$")
@@ -120,6 +123,7 @@ def _fields(body: str, *, context: str, list_fields: set[str], order: tuple[str,
 def parse_theme_synthesis_markdown(text: str) -> dict[str, Any]:
     if not isinstance(text, str) or not text.strip():
         raise ThemeSynthesisMarkdownError(["سند Markdown خالی است."])
+    text = unwrap_outer_markdown_code_fence(text)
     headings = _headings(text)
     _empty(headings[0].body, "عنوان اصلی")
     index = _expect(headings, 1, 2, "METADATA")

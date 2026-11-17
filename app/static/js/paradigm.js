@@ -7,10 +7,16 @@ const zoomContent = document.querySelector("#paradigm-zoom-content");
 const viewport = document.querySelector("#paradigm-viewport");
 const detailPanel = document.querySelector("#paradigm-detail");
 const exportStatus = document.querySelector("#paradigm-export-status");
+const layoutDataElement = document.querySelector("#paradigm-layout-data");
 
 if (dataElement && canvas && links && zoomContent && viewport && detailPanel) {
 	const diagram = JSON.parse(dataElement.textContent || "{}");
+	const layoutPositions = layoutDataElement
+		? JSON.parse(layoutDataElement.textContent || "{}")
+		: {};
 	let zoom = 1;
+	let layoutEditing = false;
+	let draggedNode = null;
 	const svgNamespace = "http://www.w3.org/2000/svg";
 
 	function addText(parent, tag, text, className) {
@@ -245,6 +251,7 @@ if (dataElement && canvas && links && zoomContent && viewport && detailPanel) {
 			const button = document.querySelector(`#paradigm-node-${CSS.escape(node.id)}`);
 			button?.addEventListener("click", () => renderFinalNodeDetails(node));
 		}
+		applyLayoutPositions();
 	} else {
 		for (const node of diagram.nodes) {
 			const button = document.querySelector(`#paradigm-node-${CSS.escape(node.id)}`);
@@ -255,6 +262,85 @@ if (dataElement && canvas && links && zoomContent && viewport && detailPanel) {
 				renderDetails(node);
 			});
 		}
+	}
+
+	function applyLayoutPositions() {
+		for (const node of diagram.entity_nodes || []) {
+			const button = document.querySelector(`#paradigm-node-${CSS.escape(node.id)}`);
+			const position = layoutPositions[node.id];
+			if (button && position) {
+				button.style.translate = `${position.x}px ${position.y}px`;
+			} else if (button) {
+				button.style.removeProperty("translate");
+			}
+		}
+		requestAnimationFrame(drawEdges);
+	}
+
+	const layoutEditToggle = document.querySelector("[data-layout-edit-toggle]");
+	if (diagram.model_mode === "final" && layoutEditToggle) {
+		layoutEditToggle.addEventListener("click", () => {
+			layoutEditing = !layoutEditing;
+			canvas.classList.toggle("is-layout-editing", layoutEditing);
+			layoutEditToggle.setAttribute("aria-pressed", String(layoutEditing));
+			layoutEditToggle.textContent = layoutEditing ? "پایان ویرایش چیدمان" : "ویرایش چیدمان";
+		});
+
+		canvas.addEventListener("pointerdown", event => {
+			const node = event.target.closest(".paradigm-entity-node");
+			if (!layoutEditing || !node) return;
+			const current = layoutPositions[node.dataset.nodeId] || { x: 0, y: 0 };
+			draggedNode = {
+				element: node,
+				id: node.dataset.nodeId,
+				startX: event.clientX,
+				startY: event.clientY,
+				originX: current.x,
+				originY: current.y,
+			};
+			node.setPointerCapture(event.pointerId);
+		});
+
+		canvas.addEventListener("pointermove", event => {
+			if (!draggedNode) return;
+			const position = {
+				x: draggedNode.originX + (event.clientX - draggedNode.startX) / zoom,
+				y: draggedNode.originY + (event.clientY - draggedNode.startY) / zoom,
+			};
+			layoutPositions[draggedNode.id] = position;
+			draggedNode.element.style.translate = `${position.x}px ${position.y}px`;
+			requestAnimationFrame(drawEdges);
+		});
+
+		const finishDrag = () => { draggedNode = null; };
+		canvas.addEventListener("pointerup", finishDrag);
+		canvas.addEventListener("pointercancel", finishDrag);
+
+		document.querySelector("[data-layout-reset]")?.addEventListener("click", () => {
+			for (const node of diagram.entity_nodes || []) delete layoutPositions[node.id];
+			applyLayoutPositions();
+			if (exportStatus) exportStatus.textContent = "چیدمان به حالت اولیه برگشت؛ برای ثبت، ذخیره چیدمان را بزنید.";
+		});
+
+		document.querySelector("[data-layout-save]")?.addEventListener("click", async event => {
+			const button = event.currentTarget;
+			button.disabled = true;
+			try {
+				const response = await fetch(window.location.pathname.replace(/\/$/, "") + "/layout", {
+					method: "POST",
+					headers: {"Content-Type": "application/json"},
+					body: JSON.stringify({positions: layoutPositions}),
+				});
+				const result = await response.json();
+				if (!response.ok) throw new Error(result.detail || "ذخیره چیدمان ناموفق بود.");
+				if (exportStatus) exportStatus.textContent = `چیدمان نسخه ${result.version} ذخیره شد.`;
+				window.location.reload();
+			} catch (error) {
+				if (exportStatus) exportStatus.textContent = error.message || "ذخیره چیدمان ناموفق بود.";
+			} finally {
+				button.disabled = false;
+			}
+		});
 	}
 
 	document.querySelectorAll("[data-zoom]").forEach(button => {

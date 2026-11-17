@@ -16,6 +16,8 @@
 10. شناسه رابطه و تناقض در پاسخ موقت است (`AI_RELATIONSHIP_001`, `AI_RELATIONSHIP_CONTRADICTION_001`). شناسه نود یا منبع تازه نساز.
 11. نقل‌قول را در خروجی تکرار نکن؛ فقط شناسه Evidence را بیاور.
 12. پژوهشگر تصمیم نهایی را می‌گیرد. زنجیره تفکر داخلی تولید نکن.
+13. جایگاه هر تم در مؤلفه تأییدشده‌اش ثابت است؛ تم را به مؤلفه دیگری منتقل یا بازنویسی نکن.
+14. رابطه را فقط میان نودهای مدل، از جمله پدیده محوری تلفیقی، پیشنهاد کن؛ پدیده‌ها و روابط مستقل مصاحبه‌ها فقط منبع پشتیبان‌اند.
 
 ## فراداده
 - run_id: {{RUN_ID}}
@@ -37,3 +39,5 @@
 در QUALITY AUDIT به‌ترتیب: `input_node_count`, `proposed_relationship_count`, `direct_relationship_count`, `interpretive_relationship_count`, `hypothetical_relationship_count`, `unlinked_node_count`, `missing_supporting_references`, `unsupported_relationships`, `duplicate_relationships`, `invalid_node_references`, `invalid_evidence_references`, `contradictions`, `analysis_limitations`, `final_status`.
 
 {{FORMAT_CONTRACT}}
+
+کل سند خروجی را درون یک بلوک کد واحد با سه علامت بک‌تیک قرار بده و هیچ متنی بیرون از بلوک ننویس.

@@ -102,7 +102,16 @@ def collect_run_pools(run_id: str, *, persist: bool = True) -> dict[str, Any]:
     if existing and persist:
         mark_stage_results_stale(
             run_id,
-            ("component_synthesis", "category_grouping", "theme_synthesis", "phenomenon_synthesis", "relationship_synthesis", "final_model"),
+            (
+                "component_synthesis",
+                "category_integration",
+                "category_grouping",
+                "theme_abstraction",
+                "theme_synthesis",
+                "phenomenon_synthesis",
+                "relationship_synthesis",
+                "final_model",
+            ),
         )
 
     pools: dict[str, list[dict[str, Any]]] = {key: [] for key in COMPONENT_KEYS}

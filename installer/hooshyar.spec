@@ -1,20 +1,22 @@
+import sys
 from pathlib import Path
 
-from PyInstaller.utils.hooks import collect_submodules
+from PyInstaller.utils.hooks import collect_all, collect_submodules
 
 ROOT = Path(SPECPATH).resolve().parent
+sys.path.insert(0, str(ROOT))
+app_datas, app_binaries, app_hiddenimports = collect_all("app")
 
 a = Analysis(
     [str(ROOT / "installer" / "launcher.py")],
     pathex=[str(ROOT)],
-    binaries=[],
+    binaries=app_binaries,
     datas=[
-        (str(ROOT / "app" / "templates"), "app/templates"),
-        (str(ROOT / "app" / "static"), "app/static"),
+        *app_datas,
         (str(ROOT / "prompts"), "prompts"),
         (str(ROOT / "schemas"), "schemas"),
     ],
-    hiddenimports=collect_submodules("app") + collect_submodules("uvicorn"),
+    hiddenimports=app_hiddenimports + collect_submodules("uvicorn"),
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],

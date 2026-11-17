@@ -1,5 +1,7 @@
 #define AppName "Hooshyar"
-#define AppVersion "1.0.0"
+#ifndef AppVersion
+  #define AppVersion "1.0.0"
+#endif
 
 [Setup]
 AppId={{BA41494C-424D-487B-9B33-25792C2A5537}

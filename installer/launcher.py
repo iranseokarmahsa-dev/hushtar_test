@@ -60,6 +60,8 @@ def main() -> None:
     os.environ.setdefault("HOOSHYAR_DATA_DIR", str(data_dir / "data"))
     os.environ.setdefault("ENVIRONMENT", "development")
     resource_dir = _resource_dir()
+    if str(resource_dir) not in sys.path:
+        sys.path.insert(0, str(resource_dir))
     install_dir = (
         Path(sys.executable).resolve().parent
         if getattr(sys, "frozen", False)
@@ -76,13 +78,14 @@ def main() -> None:
     )
 
     try:
+        from app.main import app
         import uvicorn
 
         port = _available_port()
         url = f"http://127.0.0.1:{port}"
         server = threading.Thread(
             target=uvicorn.run,
-            args=("app.main:app",),
+            args=(app,),
             kwargs={
                 "host": "127.0.0.1",
                 "port": port,

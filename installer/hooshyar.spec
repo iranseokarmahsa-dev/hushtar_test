@@ -6,17 +6,23 @@ from PyInstaller.utils.hooks import collect_all, collect_submodules
 ROOT = Path(SPECPATH).resolve().parent
 sys.path.insert(0, str(ROOT))
 app_datas, app_binaries, app_hiddenimports = collect_all("app")
+fastapi_datas, fastapi_binaries, fastapi_hiddenimports = collect_all("fastapi")
 
 a = Analysis(
     [str(ROOT / "installer" / "launcher.py")],
     pathex=[str(ROOT)],
-    binaries=app_binaries,
+    binaries=app_binaries + fastapi_binaries,
     datas=[
         *app_datas,
+        *fastapi_datas,
         (str(ROOT / "prompts"), "prompts"),
         (str(ROOT / "schemas"), "schemas"),
     ],
-    hiddenimports=app_hiddenimports + collect_submodules("uvicorn"),
+    hiddenimports=(
+        app_hiddenimports
+        + fastapi_hiddenimports
+        + collect_submodules("uvicorn")
+    ),
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],

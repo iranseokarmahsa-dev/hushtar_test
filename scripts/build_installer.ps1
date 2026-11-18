@@ -10,13 +10,20 @@ $repositoryRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 Push-Location $repositoryRoot
 
 try {
+    foreach ($directory in @("build", "dist")) {
+        $path = Join-Path $repositoryRoot $directory
+        if (Test-Path -LiteralPath $path) {
+            Remove-Item -LiteralPath $path -Recurse -Force
+        }
+    }
+
     $python = Get-Command python -ErrorAction Stop
     & $python.Source -m pip install -r requirements.txt pyinstaller
     if ($LASTEXITCODE -ne 0) {
         throw "Installing Python build dependencies failed (exit code $LASTEXITCODE)."
     }
 
-    & $python.Source -m PyInstaller --noconfirm --clean installer/hooshyar.spec
+    & $python.Source -m PyInstaller --noconfirm --clean --noconsole installer/hooshyar.spec
     if ($LASTEXITCODE -ne 0) {
         throw "PyInstaller failed (exit code $LASTEXITCODE)."
     }

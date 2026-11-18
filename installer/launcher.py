@@ -81,7 +81,11 @@ def main() -> None:
         from app.main import app
         import uvicorn
 
-        port = _available_port()
+        port = (
+            int(os.environ["HOOSHYAR_PORT"])
+            if "HOOSHYAR_PORT" in os.environ
+            else _available_port()
+        )
         url = f"http://127.0.0.1:{port}"
         server = threading.Thread(
             target=uvicorn.run,
@@ -97,7 +101,7 @@ def main() -> None:
         )
         server.start()
         _wait_for_server(server, url)
-        if not webbrowser.open(url):
+        if os.environ.get("HOOSHYAR_NO_BROWSER") != "1" and not webbrowser.open(url):
             raise RuntimeError(
                 f"Hooshyar is running, but a browser could not be opened.\nOpen {url} manually."
             )

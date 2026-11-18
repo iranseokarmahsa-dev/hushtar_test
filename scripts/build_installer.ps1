@@ -40,6 +40,51 @@ try {
     New-Item -ItemType Directory -Path $graphvizDestination -Force | Out-Null
     Copy-Item -Path (Join-Path $graphvizInstallRoot "*") -Destination $graphvizDestination -Recurse -Force
 
+    $listener = [System.Net.Sockets.TcpListener]::new([System.Net.IPAddress]::Loopback, 0)
+    $listener.Start()
+    $port = $listener.LocalEndpoint.Port
+    $listener.Stop()
+
+    $env:HOOSHYAR_PORT = "$port"
+    $env:HOOSHYAR_NO_BROWSER = "1"
+    $env:HOOSHYAR_DATA_DIR = Join-Path $env:TEMP "Hooshyar-build-smoke-$PID"
+    $executable = Join-Path $repositoryRoot "dist/Hooshyar/Hooshyar.exe"
+    $process = Start-Process -FilePath $executable -PassThru
+    $healthy = $false
+    $lastError = "No response received."
+    try {
+        $deadline = (Get-Date).AddSeconds(45)
+        while ((Get-Date) -lt $deadline) {
+            $process.Refresh()
+            if ($process.HasExited) {
+                throw "Packaged Hooshyar exited during startup (exit code $($process.ExitCode))."
+            }
+            try {
+                $response = Invoke-RestMethod -Uri "http://127.0.0.1:$port/health" -TimeoutSec 2
+                if ($response.status -eq "ok") {
+                    $healthy = $true
+                    break
+                }
+                $lastError = "Unexpected health response: $($response | ConvertTo-Json -Compress)"
+            }
+            catch {
+                $lastError = $_.Exception.Message
+            }
+            Start-Sleep -Seconds 1
+        }
+        if (-not $healthy) {
+            throw "Packaged Hooshyar failed its /health smoke test: $lastError"
+        }
+        Write-Output "Packaged Hooshyar started and passed /health."
+    }
+    finally {
+        $process.Refresh()
+        if (-not $process.HasExited) {
+            Stop-Process -Id $process.Id -Force
+            Wait-Process -Id $process.Id -Timeout 10 -ErrorAction SilentlyContinue
+        }
+    }
+
     $innoCandidates = @(
         (Join-Path ${env:ProgramFiles(x86)} "Inno Setup 6/ISCC.exe"),
         (Join-Path $env:ProgramFiles "Inno Setup 6/ISCC.exe")

@@ -23,7 +23,7 @@ try {
         throw "Installing Python build dependencies failed (exit code $LASTEXITCODE)."
     }
 
-    & $python.Source -m PyInstaller --noconfirm --clean --noconsole installer/hooshyar.spec
+    & $python.Source -m PyInstaller --noconfirm --clean installer/hooshyar.spec
     if ($LASTEXITCODE -ne 0) {
         throw "PyInstaller failed (exit code $LASTEXITCODE)."
     }

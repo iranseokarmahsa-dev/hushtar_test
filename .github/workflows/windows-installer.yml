@@ -35,6 +35,125 @@ jobs:
           $version = $env:APP_VERSION
           if (-not $version) { $version = $env:GITHUB_REF_NAME -replace '^v', '' }
           .\scripts\build_installer.ps1 -Version $version
+      - name: Test installer in a clean Windows environment
+        shell: pwsh
+        run: |
+          $hooshyarRoot = Join-Path $env:LOCALAPPDATA "Hooshyar"
+          if (Test-Path $hooshyarRoot) {
+            Remove-Item -LiteralPath $hooshyarRoot -Recurse -Force
+          }
+
+          $installer = Resolve-Path "installer-output/HOOSHYAR-Setup.exe"
+          Start-Process -FilePath $installer -ArgumentList "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART" -Wait
+
+          $listener = [System.Net.Sockets.TcpListener]::new([System.Net.IPAddress]::Loopback, 0)
+          $listener.Start()
+          $port = $listener.LocalEndpoint.Port
+          $listener.Stop()
+
+          $env:HOOSHYAR_PORT = "$port"
+          $env:HOOSHYAR_NO_BROWSER = "1"
+          $executable = Join-Path $env:LOCALAPPDATA "Programs/Hooshyar/Hooshyar.exe"
+          $process = Start-Process -FilePath $executable -PassThru
+          try {
+            $deadline = (Get-Date).AddSeconds(45)
+            $healthy = $false
+            while ((Get-Date) -lt $deadline) {
+              $process.Refresh()
+              if ($process.HasExited) {
+                throw "Installed Hooshyar exited during startup (exit code $($process.ExitCode))."
+              }
+              try {
+                $response = Invoke-RestMethod -Uri "http://127.0.0.1:$port/health" -TimeoutSec 2
+                if ($response.status -eq "ok") {
+                  $healthy = $true
+                  break
+                }
+              }
+              catch {
+                Start-Sleep -Milliseconds 500
+              }
+            }
+            if (-not $healthy) {
+              throw "Installed Hooshyar did not pass /health."
+            }
+
+            $targetDatabase = Join-Path $hooshyarRoot "data/hooshyar.sqlite3"
+            $validationScript = @"
+          import sqlite3
+          from pathlib import Path
+          import os
+
+          source = Path(os.getcwd()) / "data" / "hooshyar.sqlite3"
+          target = Path(os.environ["LOCALAPPDATA"]) / "Hooshyar" / "data" / "hooshyar.sqlite3"
+          with sqlite3.connect(source) as source_db, sqlite3.connect(target) as target_db:
+              source_db.row_factory = sqlite3.Row
+              target_db.row_factory = sqlite3.Row
+              assert target_db.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
+
+              source_projects = [dict(row) for row in source_db.execute("SELECT * FROM projects")]
+              target_projects = [dict(row) for row in target_db.execute("SELECT * FROM projects")]
+              assert len(source_projects) == 13
+              assert len(target_projects) == 13
+
+              comparable_fields = [
+                  "project_id", "interview_id", "title", "topic", "created_at", "updated_at",
+                  "source_filename", "paragraphs_json", "concepts_json", "analysis_json",
+                  "raw_analysis_json", "researcher_edits_json", "processing_issues_json",
+                  "stage_outputs_json",
+              ]
+              source_map = {row["project_id"]: row for row in source_projects}
+              target_map = {row["project_id"]: row for row in target_projects}
+              assert set(source_map) == set(target_map)
+              for project_id, source_row in source_map.items():
+                  target_row = target_map[project_id]
+                  for field in comparable_fields:
+                      assert target_row[field] == source_row[field], (project_id, field)
+
+              source_runs = [dict(row) for row in source_db.execute("SELECT * FROM synthesis_runs")]
+              target_runs = [dict(row) for row in target_db.execute("SELECT * FROM synthesis_runs")]
+              assert len(source_runs) == len(target_runs)
+              run_fields = [
+                  "run_id", "title", "study_topic", "expected_source_count",
+                  "selected_source_count", "status", "current_stage", "schema_version",
+                  "input_hash", "created_at", "updated_at", "completed_at",
+              ]
+              source_run_map = {row["run_id"]: row for row in source_runs}
+              target_run_map = {row["run_id"]: row for row in target_runs}
+              assert set(source_run_map) == set(target_run_map)
+              for run_id, source_row in source_run_map.items():
+                  target_row = target_run_map[run_id]
+                  for field in run_fields:
+                      assert target_row[field] == source_row[field], (run_id, field)
+
+              source_stage_results = [dict(row) for row in source_db.execute(
+                  "SELECT * FROM synthesis_stage_results"
+              )]
+              target_stage_results = [dict(row) for row in target_db.execute(
+                  "SELECT * FROM synthesis_stage_results"
+              )]
+              assert len(source_stage_results) == len(target_stage_results)
+              print(f"Verified 13 projects, {len(source_runs)} synthesis runs, and {len(source_stage_results)} stage results")
+          "@
+            $validationScriptPath = Join-Path $env:TEMP "validate-hooshyar-install.py"
+            Set-Content -LiteralPath $validationScriptPath -Value $validationScript -Encoding UTF8
+            python $validationScriptPath
+          if ($LASTEXITCODE -ne 0) {
+            throw "Installed database validation failed."
+          }
+
+            $projectIds = python -c "import sqlite3, os; c=sqlite3.connect(os.path.join(os.environ['LOCALAPPDATA'], 'Hooshyar', 'data', 'hooshyar.sqlite3')); print(' '.join(r[0] for r in c.execute('SELECT project_id FROM projects'))) "
+            foreach ($projectId in $projectIds.Split()) {
+              Invoke-WebRequest -Uri "http://127.0.0.1:$port/projects/$projectId" -UseBasicParsing | Out-Null
+              Invoke-WebRequest -Uri "http://127.0.0.1:$port/results/$projectId" -UseBasicParsing | Out-Null
+            }
+          }
+          finally {
+            $process.Refresh()
+            if (-not $process.HasExited) {
+              Stop-Process -Id $process.Id -Force
+            }
+          }
       - uses: actions/upload-artifact@v4
         with:
           name: HOOSHYAR-Setup

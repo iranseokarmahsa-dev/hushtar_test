@@ -2,6 +2,7 @@
 
 import logging
 import os
+import shutil
 import socket
 import sys
 import threading
@@ -34,6 +35,17 @@ def _data_dir() -> Path:
     return Path.home() / "AppData" / "Local" / "Hooshyar"
 
 
+def _prepare_data_dir(data_dir: Path, resource_dir: Path) -> None:
+    database_dir = data_dir / "data"
+    database_dir.mkdir(parents=True, exist_ok=True)
+    database_path = database_dir / "hooshyar.sqlite3"
+    if database_path.exists():
+        return
+    seed_path = resource_dir / "seed" / "hooshyar.sqlite3"
+    if seed_path.is_file():
+        shutil.copy2(seed_path, database_path)
+
+
 def _available_port() -> int:
     with socket.socket() as sock:
         sock.bind(("127.0.0.1", 0))
@@ -42,11 +54,12 @@ def _available_port() -> int:
 
 def _wait_for_server(thread: threading.Thread, url: str) -> None:
     deadline = time.monotonic() + 30
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
     while time.monotonic() < deadline:
         if not thread.is_alive():
             raise RuntimeError("The Hooshyar local server stopped during startup.")
         try:
-            with urllib.request.urlopen(f"{url}/health", timeout=1) as response:
+            with opener.open(f"{url}/health", timeout=1) as response:
                 if response.status == 200:
                     return
         except (urllib.error.URLError, TimeoutError):
@@ -57,6 +70,7 @@ def _wait_for_server(thread: threading.Thread, url: str) -> None:
 def main() -> None:
     data_dir = _data_dir()
     data_dir.mkdir(parents=True, exist_ok=True)
+    _prepare_data_dir(data_dir, _resource_dir())
     os.environ.setdefault("HOOSHYAR_DATA_DIR", str(data_dir / "data"))
     os.environ.setdefault("ENVIRONMENT", "development")
     resource_dir = _resource_dir()

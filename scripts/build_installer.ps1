@@ -23,6 +23,13 @@ try {
         throw "Installing Python build dependencies failed (exit code $LASTEXITCODE)."
     }
 
+    New-Item -ItemType Directory -Path (Join-Path $repositoryRoot "build") -Force | Out-Null
+    $seedDatabase = Join-Path $repositoryRoot "build/hooshyar-seed.sqlite3"
+    & $python.Source scripts/export_database.py --output $seedDatabase
+    if ($LASTEXITCODE -ne 0) {
+        throw "Creating the installer database seed failed."
+    }
+
     & $python.Source -m PyInstaller --noconfirm --clean installer/hooshyar.spec
     if ($LASTEXITCODE -ne 0) {
         throw "PyInstaller failed (exit code $LASTEXITCODE)."

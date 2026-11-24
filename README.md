@@ -9,11 +9,32 @@ python3 -m venv .venv
 ```
 
 برنامه در `http://127.0.0.1:8000` در دسترس است. در حالت development ورود مدیر غیرفعال است.
+
+نصب‌کنندهٔ Windows هنگام ساخت، یک snapshot از پایگاه دادهٔ پروژه را در برنامه می‌گنجاند. در اولین اجرای نصب‌شده، فایل `hooshyar.sqlite3` در `%LOCALAPPDATA%\Hooshyar\data` با همان ۱۳ مصاحبهٔ موجود در نسخهٔ مبدا ایجاد می‌شود. اجرای‌های بعدی یا به‌روزرسانی‌ها دیتابیس موجود کاربر را بازنویسی نمی‌کنند.
 برای دریافت خروجی‌های Graphviz در محیط محلی، ابزار Graphviz را نیز نصب کنید (در Debian/Ubuntu: `sudo apt-get install graphviz fonts-noto-core`).
 
 ## نصب روی ویندوز
 
 فایل `HOOSHYAR-Setup.exe` را از Artifact گردش کار **Windows installer** در GitHub Actions دریافت کنید. آن را دوبار کلیک کنید و مراحل نصب را ادامه دهید؛ نصب‌کننده میانبر هوشیار را روی دسکتاپ می‌سازد. با کلیک روی میانبر، سرور محلی اجرا و محیط هوشیار در مرورگر پیش‌فرض باز می‌شود. داده‌ها و گزارش اجرا در `%LOCALAPPDATA%\Hooshyar` ذخیره می‌شوند و با حذف یا به‌روزرسانی برنامه در پوشه نصب پاک نمی‌شوند.
+
+برای انتقال تاریخچه از محیط VS Code/Codespaces به نسخهٔ ویندوز، پس از ذخیرهٔ همهٔ مصاحبه‌ها در محیط لوکال اجرا کنید:
+
+```bash
+.venv/bin/python scripts/export_database.py
+```
+
+این دستور یک Snapshot سازگار و اعتبارسنجی‌شده از کل تاریخچه را در `data/hooshyar-transfer.sqlite3` می‌سازد؛ فایل را از Explorer در VS Code به رایانهٔ ویندوز دانلود کنید. برنامهٔ نصب‌شده را کامل ببندید و در PowerShell اجرا کنید (مسیر فایل دانلودشده را در صورت نیاز تغییر دهید):
+
+```powershell
+$target = Join-Path $env:LOCALAPPDATA "Hooshyar\data"
+New-Item -ItemType Directory -Force -Path $target | Out-Null
+if (Test-Path (Join-Path $target "hooshyar.sqlite3")) {
+    Copy-Item (Join-Path $target "hooshyar.sqlite3") (Join-Path $target "hooshyar-before-transfer.sqlite3")
+}
+Copy-Item "$HOME\Downloads\hooshyar-transfer.sqlite3" (Join-Path $target "hooshyar.sqlite3") -Force
+```
+
+این انتقال کل تاریخچهٔ موجود در محیط لوکال را شامل می‌شود. پس از اجرای دوبارهٔ برنامه، پروژه‌ها در «تاریخچه» دیده می‌شوند؛ مصاحبه‌های جدیدی که در نسخهٔ نصب‌شده وارد کنید نیز به‌طور پایدار در `%LOCALAPPDATA%\Hooshyar\data` ذخیره خواهند شد. فایل انتقال شامل داده‌های پژوهش است؛ آن را فقط در محل امن نگه دارید و به مخزن Git اضافه نکنید.
 
 برای ساخت نصب‌کننده در GitHub، گردش کار را از زبانهٔ Actions با **Run workflow** اجرا و نسخه را وارد کنید؛ با push کردن تگ نسخه‌ای با الگوی `v*` نیز فایل نصبی ساخته می‌شود. روی ویندوز با Python 3.12، Graphviz و Inno Setup 6 نیز می‌توانید `.\scripts\build_installer.ps1 -Version 1.0.3` را اجرا کنید. پیش از ساخت نصب‌کننده، فایل اجرایی بسته‌بندی‌شده اجرا و endpoint سلامت آن بررسی می‌شود. فایل EXE ویندوز باید روی Windows ساخته شود و از محیط توسعهٔ Linux قابل تولید مستقیم نیست.
 

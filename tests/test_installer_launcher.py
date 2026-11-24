@@ -5,7 +5,7 @@ import threading
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from unittest.mock import patch
 
-from installer.launcher import _wait_for_server
+from installer.launcher import _prepare_data_dir, _wait_for_server
 
 
 class HealthHandler(BaseHTTPRequestHandler):
@@ -30,3 +30,21 @@ def test_health_check_bypasses_system_proxy():
         server.shutdown()
         thread.join()
         server.server_close()
+
+
+def test_prepare_data_dir_installs_seed_only_for_new_database(tmp_path):
+    data_dir = tmp_path / "Hooshyar"
+    resource_dir = tmp_path / "resources"
+    seed_dir = resource_dir / "seed"
+    seed_dir.mkdir(parents=True)
+    seed_database = seed_dir / "hooshyar.sqlite3"
+    seed_database.write_bytes(b"seed database")
+
+    _prepare_data_dir(data_dir, resource_dir)
+
+    target_database = data_dir / "data" / "hooshyar.sqlite3"
+    assert target_database.read_bytes() == b"seed database"
+
+    target_database.write_bytes(b"user database")
+    _prepare_data_dir(data_dir, resource_dir)
+    assert target_database.read_bytes() == b"user database"

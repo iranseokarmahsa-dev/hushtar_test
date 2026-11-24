@@ -17,6 +17,7 @@ a = Analysis(
         *fastapi_datas,
         (str(ROOT / "prompts"), "prompts"),
         (str(ROOT / "schemas"), "schemas"),
+        (str(ROOT / "build" / "hooshyar-seed.sqlite3"), "seed"),
     ],
     hiddenimports=(
         app_hiddenimports

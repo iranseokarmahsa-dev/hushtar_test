@@ -18,6 +18,7 @@ try {
     }
 
     $python = Get-Command python -ErrorAction Stop
+     $env:PYTHONIOENCODING = "utf-8"
     & $python.Source -m pip install -r requirements.txt pyinstaller
     if ($LASTEXITCODE -ne 0) {
         throw "Installing Python build dependencies failed (exit code $LASTEXITCODE)."

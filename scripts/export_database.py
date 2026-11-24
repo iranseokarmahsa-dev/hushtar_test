@@ -60,8 +60,8 @@ def main() -> None:
 		project_count = backup_database(DATABASE_PATH, args.output)
 	except (OSError, sqlite3.Error, ValueError) as exc:
 		parser.error(str(exc))
-	print(f"پشتیبان معتبر ساخته شد: {args.output.resolve()}")
-	print(f"تعداد پروژه‌های موجود در پشتیبان: {project_count}")
+	print(f"Valid backup created: {args.output.resolve()}")
+	print(f"Project count in backup: {project_count}")
 
 
 if __name__ == "__main__":

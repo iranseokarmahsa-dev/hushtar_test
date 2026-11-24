@@ -41,7 +41,7 @@ def _prepare_data_dir(data_dir: Path, resource_dir: Path) -> None:
     database_path = database_dir / "hooshyar.sqlite3"
     if database_path.exists():
         return
-    seed_path = resource_dir / "seed" / "hooshyar.sqlite3"
+    seed_path = resource_dir / "seed" / "hooshyar-seed.sqlite3"
     if seed_path.is_file():
         shutil.copy2(seed_path, database_path)
 

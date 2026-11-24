@@ -37,7 +37,7 @@ def test_prepare_data_dir_installs_seed_only_for_new_database(tmp_path):
     resource_dir = tmp_path / "resources"
     seed_dir = resource_dir / "seed"
     seed_dir.mkdir(parents=True)
-    seed_database = seed_dir / "hooshyar.sqlite3"
+    seed_database = seed_dir / "hooshyar-seed.sqlite3"
     seed_database.write_bytes(b"seed database")
 
     _prepare_data_dir(data_dir, resource_dir)

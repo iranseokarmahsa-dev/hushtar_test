@@ -1,0 +1,48 @@
+{% extends "base.html" %}
+{% block title %}پدیده محوری مصاحبه | {{ project.title }}{% endblock %}
+{% block content %}
+<div class="axial-page">
+<div class="breadcrumbs"><a href="/results/{{ project.project_id }}/axial-coding">داشبورد کدگذاری محوری</a><span>/</span><span>پدیده محوری مصاحبه</span></div>
+<header class="axial-header"><div><p class="eyebrow">گام چهارم از پنج گام</p><h1>پدیده محوری این مصاحبه</h1><p class="lede">این تبیین فقط مربوط به مصاحبه فعلی است، نه پدیده کل پژوهش.</p></div></header>
+{% include "_axial_nav.html" %}
+{% if request.query_params.get('saved') %}<p class="alert alert-success">تصمیم پدیده محوری مصاحبه ذخیره شد.</p>{% endif %}
+<div class="axial-phenomenon">
+<section class="axial-phenomenon-main">
+	<p class="eyebrow">پیشنهاد AI</p><h2>{{ phenomenon.title or 'تعیین نشده' }}</h2><p>{{ phenomenon.definition or 'داده کافی برای تبیین وجود ندارد.' }}</p>
+	<p>{{ phenomenon.selection_reason }}</p>
+	<p><strong>وضعیت تولید AI:</strong> {% if phenomenon %}تولید شده{% else %}تولید نشده{% endif %}</p>
+	{% for category_id in phenomenon.supporting_category_ids or [] %}<span class="supporting-chip">{{ category_id }}</span>{% endfor %}
+	<p><strong>مفاهیم پشتیبان:</strong> {{ phenomenon.supporting_concept_ids|join('، ') if phenomenon.supporting_concept_ids else 'ثبت نشده' }}</p>
+	{% for evidence in phenomenon.evidence or [] %}<blockquote>{{ evidence.paragraph_id }} «{{ evidence.exact_quote }}»</blockquote>{% endfor %}
+	<h3>ابهام‌ها و تفسیرهای جایگزین</h3>
+	{% for alternative in phenomenon.alternative_interpretations or [] %}<article class="review-card"><strong>{{ alternative.title }}</strong><p>{{ alternative.description }}</p></article>{% else %}<p class="muted">تفسیر جایگزین ثبت‌شده‌ای وجود ندارد.</p>{% endfor %}
+	<h3>روابط مرتبط</h3>
+	{% for relationship in relationships %}
+	{% if relationship.source_category_id in (phenomenon.supporting_category_ids or []) or relationship.target_category_id in (phenomenon.supporting_category_ids or []) %}
+		<p><code>{{ relationship.relationship_id }}</code> · {{ relationship.source_category_id }} ← {{ relationship.target_category_id }} · {{ relationship.description }}</p>
+	{% endif %}
+	{% else %}<p class="muted">رابطه مرتبطی ثبت نشده است.</p>{% endfor %}
+</section>
+<section class="axial-phenomenon-main" style="margin-top:12px">
+	<h2>تصمیم پژوهشگر</h2>
+	<form method="post" action="/results/{{ project.project_id }}/axial-coding/phenomenon/decision" class="form-stack">
+		<label>عنوان نهایی یا عنوان اصلاح‌شده<input name="title" value="{{ phenomenon_edit.title or phenomenon.title or '' }}"></label>
+		<label>تعریف و تبیین<textarea name="definition" rows="4">{{ phenomenon_edit.definition or phenomenon.definition or '' }}</textarea></label>
+		<label>دلیل، ابهام‌ها و تعارض‌ها<textarea name="reason" rows="3">{{ phenomenon_edit.decision_reason or '' }}</textarea></label>
+		<div class="axial-phenomenon-actions">
+			<button class="button button-primary" type="submit" name="researcher_status" value="تأیید">تأیید</button>
+			<button class="button button-secondary" type="submit" name="researcher_status" value="اصلاح و تأیید">اصلاح و تأیید</button>
+			<button class="button button-danger" type="submit" name="researcher_status" value="رد">رد</button>
+			<button class="button button-secondary" type="submit" name="researcher_status" value="نامشخص">نامشخص</button>
+		</div>
+	</form>
+</section>
+</div>
+<footer class="axial-savebar">
+	<a class="button button-secondary" href="/results/{{ project.project_id }}/axial-coding">بازگشت به داشبورد</a>
+	<a class="button button-secondary" href="/results/{{ project.project_id }}/axial-coding/relationships">گام قبل</a>
+	<span class="axial-save-status">ذخیره شد</span>
+	<a class="button button-primary" href="/results/{{ project.project_id }}/axial-coding/final">ذخیره و ادامه به گام بعد</a>
+</footer>
+</div>
+{% endblock %}

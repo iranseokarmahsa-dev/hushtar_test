@@ -1115,8 +1115,9 @@ def test_concept_review_decisions_store_final_values_without_changing_analysis(
 			"concept_ids": ["C001"],
 			"suggested_concepts": ["عنوان ویرایش‌شده"],
 			"suggested_codes": ["پیامدها"],
-			"researcher_notes": ["یادداشت پژوهشگر"],
+			"researcher_notes": [""],
 			"review_decisions": [""],
+			"review_statuses": ["open"],
 			"decision_action": f"C001|{decision}",
 		},
 	)

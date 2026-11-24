@@ -1,0 +1,49 @@
+{% extends "base.html" %}
+{% block title %}روابط میان مقوله‌ها | {{ project.title }}{% endblock %}
+{% block content %}
+<div class="axial-page">
+<div class="breadcrumbs"><a href="/results/{{ project.project_id }}/axial-coding">داشبورد کدگذاری محوری</a><span>/</span><span>روابط میان مقوله‌ها</span></div>
+<header class="axial-header"><div><p class="eyebrow">گام سوم از پنج گام</p><h1>روابط میان مقوله‌ها</h1><p class="lede">{{ relationships|length }} رابطه · روابط ردشده حفظ می‌شوند.</p></div></header>
+{% include "_axial_nav.html" %}
+{% if request.query_params.get('saved') %}<p class="alert alert-success">تصمیم رابطه ذخیره شد.</p>{% endif %}
+<div class="axial-relationship-list">
+{% for relationship in relationships %}
+<details class="axial-relationship-card">
+<summary>
+	<span class="entity-id">{{ relationship.relationship_id }}</span>
+	<strong>{{ relationship.source_category_id }} ← {{ relationship.target_category_id }}</strong>
+	<span class="status-pill">{{ relationship_edits.get(relationship.relationship_id, {}).get('researcher_status', 'بررسی‌نشده') }}</span>
+	<span class="muted">{{ relationship_edits.get(relationship.relationship_id, {}).get('validity_status', 'نیازمند بازبینی') }}</span>
+</summary>
+<div class="axial-relationship-body">
+	<div>
+		<p><strong>نوع پیشنهادی:</strong> {{ relationship.relationship_type }}</p>
+		<p>{{ relationship.description }}</p>
+		<p><strong>دلیل استنباط:</strong> {{ relationship.reasoning or 'ثبت نشده' }}</p>
+		<p class="muted"><strong>وضعیت تولید AI:</strong> تولید شده</p>
+		{% for evidence in relationship.evidence or [] %}<blockquote>{{ evidence.paragraph_id }} «{{ evidence.exact_quote }}»</blockquote>{% else %}<p class="alert alert-warning">برای این رابطه شاهدی ثبت نشده است.</p>{% endfor %}
+	</div>
+	<form method="post" action="/results/{{ project.project_id }}/axial-coding/relationships/decision" class="form-stack">
+		<input type="hidden" name="relationship_id" value="{{ relationship.relationship_id }}">
+		<label>تصمیم پژوهشگر<select name="researcher_status" required>
+			<option>بررسی‌نشده</option><option>در حال بررسی</option><option>تأیید</option><option>اصلاح و تأیید</option><option>رد</option><option>نامشخص</option>
+		</select></label>
+		<label>اعتبار داده و ساختار<select name="validity_status" required>
+			<option>دارای شاهد مستقیم</option><option>شاهد غیرمستقیم یا استنباط تحلیلی</option><option>شواهد ناکافی</option><option>دارای شواهد متعارض</option><option>نقص ساختاری</option><option>نیازمند بازبینی پس از تغییرات</option>
+		</select></label>
+		<label>شرح نهایی<textarea name="description" rows="3">{{ relationship_edits.get(relationship.relationship_id, {}).get('description', relationship.description) }}</textarea></label>
+		<label>دلیل تصمیم<textarea name="reason" rows="2"></textarea></label>
+		<button class="button button-primary" type="submit">ذخیره تصمیم رابطه</button>
+	</form>
+</div>
+</details>
+{% else %}<p class="empty-analysis">رابطه‌ای در خروجی ثبت نشده است.</p>{% endfor %}
+</div>
+<footer class="axial-savebar">
+		<a class="button button-secondary" href="/results/{{ project.project_id }}/axial-coding">بازگشت به داشبورد</a>
+		<a class="button button-secondary" href="/results/{{ project.project_id }}/axial-coding/paradigm">گام قبل</a>
+		<span class="axial-save-status">ذخیره شد</span>
+		<a class="button button-primary" href="/results/{{ project.project_id }}/axial-coding/phenomenon">ذخیره و ادامه به گام بعد</a>
+</footer>
+</div>
+{% endblock %}

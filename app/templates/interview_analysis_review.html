@@ -81,6 +81,7 @@
 <header class="analysis-page-header">
 	<div><p class="eyebrow">{{ project.title }}</p><h1>تحلیل محوری مصاحبه</h1><p class="lede">مصاحبه {{ project.interview_id or project.title }} · مرحله دوم تحلیل</p><span class="analysis-review-state">در حال بررسی</span></div>
 	<div class="analysis-header-actions">
+		<a class="button button-primary" href="/results/{{ project.project_id }}/axial-coding">داشبورد پنج‌گامی مرحله دوم</a>
 		<a class="button button-secondary" href="/projects/{{ project.project_id }}">بازگشت به پروژه</a>
 	</div>
 </header>

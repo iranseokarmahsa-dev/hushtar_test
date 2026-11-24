@@ -1,0 +1,143 @@
+{% extends "base.html" %}
+{% block title %}جایگاه پارادایمی | {{ project.title }}{% endblock %}
+{% block content %}
+<div class="axial-page">
+<div class="breadcrumbs"><a href="/results/{{ project.project_id }}/axial-coding">داشبورد کدگذاری محوری</a><span>/</span><span>جایگاه پارادایمی</span></div>
+<header class="axial-header">
+	<div><p class="eyebrow">گام دوم از پنج گام</p><h1>پیشنهاد هوشیار برای جایگاه پارادایمی</h1><p class="lede">هوشیار مکان احتمالی هر مقوله را پیشنهاد می‌دهد؛ برای هر پیشنهاد دلیل و متن مصاحبه نمایش داده می‌شود و تصمیم نهایی با پژوهشگر است.</p></div>
+</header>
+{% include "_axial_nav.html" %}
+{% if request.query_params.get('saved') %}<p class="alert alert-success">تصمیم جایگاه ذخیره و تاریخچه‌اش نگهداری شد.</p>{% endif %}
+
+<section class="panel axial-placement-summary" aria-label="خلاصه جایگاه‌های ثبت‌شده">
+	<div class="dashboard-section-heading">
+		<div><p class="eyebrow">خلاصهٔ نهایی</p><h2>مقوله‌های ثبت‌شده در مؤلفه‌های پارادایمی</h2></div>
+		{% if all_placements_complete %}
+			<span class="status-pill">همهٔ مقوله‌ها تعیین تکلیف شدند</span>
+		{% else %}
+			<span class="count-tag">در حال ثبت جایگاه‌ها</span>
+		{% endif %}
+	</div>
+	<div class="axial-placement-summary-grid">
+		{% for component in component_summaries %}
+			<article class="axial-placement-summary-card">
+				<p class="eyebrow">{{ component.label }}</p>
+				{% if component.categories %}
+					<ul>
+						{% for category_name in component.categories %}
+						<li>{{ category_name }}</li>
+						{% endfor %}
+					</ul>
+				{% else %}
+					<p class="muted">مقوله‌ای ثبت نشده است.</p>
+				{% endif %}
+			</article>
+		{% endfor %}
+	</div>
+</section>
+
+<div class="axial-suggestion-list">
+{% for category in categories %}
+	<article class="panel axial-category-suggestion" id="placement-category-{{ category.category_id }}">
+		<div class="dashboard-section-heading">
+			<div><p class="eyebrow">{{ category.category_id }}</p><h2>{{ category.category_name }}</h2><p class="muted">{{ category.definition }}</p></div>
+			<span class="count-tag">{{ ai_suggestions.get(category.category_id, [])|length }} پیشنهاد هوشیار</span>
+		</div>
+
+		{% set suggestions = ai_suggestions.get(category.category_id, []) %}
+		{% set placement_records = placements.get(category.category_id, {}) %}
+		{% if placement_records %}
+			{% set placement_ns = namespace(record=None) %}
+			{% for component_key, record in placement_records.items() %}
+				{% set placement_ns.record = record %}
+			{% endfor %}
+			{% set selected_key = placement_ns.record.component_key if placement_ns.record else 'unassigned' %}
+			<div class="axial-placement-result-grid">
+				<article class="axial-placement-result">
+					{% for key,label in components %}
+						{% if key == selected_key %}
+							<p class="eyebrow">جایگاه ثبت‌شده</p>
+							<h3>{{ label }}</h3>
+						{% endif %}
+					{% endfor %}
+					{% if selected_key == 'unassigned' %}
+						<p class="eyebrow">جایگاه ثبت‌شده</p>
+						<h3>نامشخص</h3>
+					{% endif %}
+					<p class="axial-result-category">{{ category.category_name }}</p>
+					{% if placement_ns.record and placement_ns.record.researcher_status %}
+						<span class="status-pill">{{ placement_ns.record.researcher_status }}</span>
+					{% endif %}
+				</article>
+			</div>
+		{% elif suggestions %}
+			<div class="axial-suggestion-grid">
+			{% for suggestion in suggestions %}
+				<section class="axial-placement-suggestion">
+					<p class="eyebrow">پیشنهاد هوشیار</p>
+					<h3>{{ suggestion.label }}</h3>
+					{% if suggestion.reason %}<p><strong>دلیل پیشنهاد:</strong> {{ suggestion.reason }}</p>{% endif %}
+					{% if suggestion.concept_ids %}<p class="muted"><strong>مفاهیم مرتبط:</strong> {{ suggestion.concept_ids|join('، ') }}</p>{% endif %}
+					{% if suggestion.evidence %}
+						<div class="evidence-disclosure">
+							<strong>متن مصاحبه و شواهد</strong>
+							{% for evidence in suggestion.evidence %}
+								<blockquote>{{ evidence.paragraph_id }} «{{ evidence.exact_quote }}»<small>{{ evidence.interpretation }}</small></blockquote>
+							{% endfor %}
+						</div>
+					{% else %}
+						<p class="muted">شاهد متنی مستقیمی برای این پیشنهاد ثبت نشده است.</p>
+					{% endif %}
+
+					<form method="post" action="/results/{{ project.project_id }}/axial-coding/paradigm/placement" class="form-stack">
+						<input type="hidden" name="category_id" value="{{ category.category_id }}">
+						<label>جایگاه نهایی
+							<select name="component_key" required>
+								{% for key,label in components %}<option value="{{ key }}" {% if suggestion.component_key == key %}selected{% endif %}>{{ label }}</option>{% endfor %}
+								<option value="unassigned" {% if suggestion.component_key == 'unassigned' %}selected{% endif %}>نامشخص / بدون جایگاه قطعی</option>
+							</select>
+						</label>
+						<label>تصمیم پژوهشگر
+							<select name="researcher_status" required>
+								<option value="تأیید">تأیید پیشنهاد</option>
+								<option value="اصلاح و تأیید">اصلاح و تأیید</option>
+								<option value="رد">رد پیشنهاد</option>
+								<option value="در حال بررسی">در حال بررسی</option>
+								<option value="نامشخص">نامشخص</option>
+							</select>
+						</label>
+						<label>دلیل تصمیم<textarea name="reason" rows="2" placeholder="دلایل تأیید، اصلاح یا رد را بنویسید"></textarea></label>
+						<button class="button button-primary" type="submit">ثبت تصمیم این پیشنهاد</button>
+					</form>
+				</section>
+			{% endfor %}
+			</div>
+		{% else %}
+			<p class="muted">هوشیار برای این مقوله پیشنهاد جایگاهی تولید نکرده است. می‌توانید یک جایگاه را به‌صورت دستی انتخاب کنید.</p>
+		{% endif %}
+		{% if not placement_records %}
+			<details class="review-correct">
+				<summary>افزودن یا تغییر جایگاه دستی</summary>
+				<form method="post" action="/results/{{ project.project_id }}/axial-coding/paradigm/placement" class="form-stack">
+					<input type="hidden" name="category_id" value="{{ category.category_id }}">
+					<label>جایگاه<select name="component_key" required><option value="unassigned">نامشخص</option>{% for key,label in components %}<option value="{{ key }}">{{ label }}</option>{% endfor %}</select></label>
+					<label>تصمیم پژوهشگر<select name="researcher_status" required><option>در حال بررسی</option><option>تأیید</option><option>اصلاح و تأیید</option><option>رد</option><option>نامشخص</option></select></label>
+					<label>دلیل<textarea name="reason" rows="2"></textarea></label>
+					<button class="button button-secondary" type="submit">ثبت جایگاه دستی</button>
+				</form>
+			</details>
+		{% endif %}
+	</article>
+{% else %}
+	<section class="panel empty-state"><strong>مقوله‌ای برای پیشنهاد جایگاه وجود ندارد.</strong></section>
+{% endfor %}
+</div>
+
+<footer class="axial-savebar">
+	<a class="button button-secondary" href="/results/{{ project.project_id }}/axial-coding">بازگشت به داشبورد</a>
+	<a class="button button-secondary" href="/results/{{ project.project_id }}/axial-coding/categories">گام قبل</a>
+	<span class="axial-save-status">تصمیم‌ها ذخیره می‌شوند</span>
+	<a class="button button-primary" href="/results/{{ project.project_id }}/axial-coding/relationships">ادامه به گام بعد</a>
+</footer>
+</div>
+{% endblock %}

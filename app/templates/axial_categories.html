@@ -1,0 +1,158 @@
+{% extends "base.html" %}
+{% block title %}مقوله‌ها و زیرمقوله‌ها | {{ project.title }}{% endblock %}
+{% block content %}
+<div class="axial-page">
+<div class="breadcrumbs"><a href="/results/{{ project.project_id }}/axial-coding">داشبورد کدگذاری محوری</a><span>/</span><span>مقوله‌ها و زیرمقوله‌ها</span></div>
+<header class="axial-header"><div><p class="eyebrow">گام اول از پنج گام</p><h1>مقوله‌ها و زیرمقوله‌ها</h1><p class="lede">{{ project.interview_id or project.title }} · {{ categories|length }} مقوله</p></div></header>
+{% include "_axial_nav.html" %}
+{% if request.query_params.get('saved') %}<p class="alert alert-success">تغییرات مقوله با حفظ شناسه‌ها و تاریخچه ذخیره شد.</p>{% endif %}
+
+<details class="panel axial-actions"><summary>ایجاد مقوله یا موجودیت جدید</summary>
+	<form method="post" action="/results/{{ project.project_id }}/axial-coding/categories/create" class="form-stack">
+		<h3>مقوله جدید</h3><label>عنوان<input name="title" required></label><label>تعریف<textarea name="definition" rows="2"></textarea></label><label>دلیل ایجاد<input name="reason" required></label><button class="button button-primary" type="submit">ایجاد مقوله با شناسه جدید</button>
+	</form>
+</details>
+
+<div class="axial-content">
+{% for category in categories %}
+<details class="axial-category-card">
+	<summary>
+		<span class="entity-id">{{ category.category_id }}</span>
+		<div><h2>{{ category.category_name }}</h2><p class="muted">{{ category.subcategories|length if category.subcategories else 0 }} زیرمقوله · {{ category.concept_ids|length if category.concept_ids else 0 }} مفهوم</p></div>
+		<span class="status-pill">{% if category_edits.get(category.category_id, {}).get('decision') == 'approved' %}تکمیل‌شده{% elif category_edits.get(category.category_id, {}).get('decision') == 'rejected' %}ردشده{% else %}نیازمند بررسی{% endif %}</span>
+	</summary>
+	<div class="axial-card-body">
+		<section class="category-detail-group category-introduction">
+			<p class="eyebrow">تعریف مقوله</p><p>{{ category.definition }}</p>
+		</section>
+
+		<section class="category-detail-group">
+			<h3>زیرمقوله‌ها</h3>
+			{% if category.subcategories %}
+				<div class="subcategory-list">
+				{% for subcategory in category.subcategories %}
+					<details class="subcategory-card" id="subcategory-{{ subcategory.subcategory_id }}">
+						<summary><span class="entity-id">{{ subcategory.subcategory_id }}</span><strong>{{ subcategory.subcategory_name }}</strong><small>{{ subcategory.concept_ids|length }} مفهوم</small></summary>
+						<div>
+							<p>{{ subcategory.definition }}</p>
+							<h4>مفاهیم این زیرمقوله</h4>
+							{% for concept_id in subcategory.concept_ids or [] %}
+								{% set concept = concept_titles.get(concept_id) %}
+								<details class="concept-evidence-card">
+									<summary><span class="entity-id">{{ concept_id }}</span><strong>{{ concept.get('title', concept.get('original_concept', 'مفهوم')) if concept else 'مفهوم' }}</strong><small>متن مصاحبه و شواهد</small></summary>
+									<div class="concept-evidence-content">
+										{% if concept and concept.paragraph_ids %}<p class="muted">پارگراف‌های منشأ: {{ concept.paragraph_ids|join('، ') }}</p>{% endif %}
+										{% if concept and concept.evidence %}
+											{% for evidence in concept.evidence %}
+												<blockquote>{{ evidence.paragraph_id }} «{{ evidence.exact_quote }}»<small>{{ evidence.interpretation }}</small></blockquote>
+											{% endfor %}
+										{% else %}<p class="muted">شاهد متنی برای این مفهوم ثبت نشده است.</p>{% endif %}
+									</div>
+								</details>
+							{% else %}<p class="muted">مفهومی به این زیرمقوله متصل نیست.</p>{% endfor %}
+						</div>
+					</details>
+				{% endfor %}
+				</div>
+			{% else %}
+				<p class="muted">زیرمقوله‌ای ثبت نشده است.</p>
+			{% endif %}
+		</section>
+
+		<details class="panel category-management">
+			<summary><strong>مدیریت و تنظیمات مقوله</strong><small>ویرایش، انتقال، ادغام، تفکیک، ویژگی‌ها، ابعاد و حذف</small></summary>
+			<div class="category-management-content">
+				<section class="category-detail-group">
+					<h3>ویرایش عنوان و تعریف</h3>
+					<form method="post" data-autosave="1" action="/results/{{ project.project_id }}/axial-coding/categories/edit" class="form-stack">
+						<input type="hidden" name="category_id" value="{{ category.category_id }}">
+						<label>عنوان<input name="title" value="{{ category.category_name }}" required></label>
+						<label>تعریف<textarea name="definition" rows="3">{{ category.definition }}</textarea></label>
+						<label>دلیل تغییر<textarea name="reason" rows="2"></textarea></label>
+						<button class="button button-primary" type="submit">ذخیره و ثبت تاریخچه</button>
+					</form>
+				</section>
+
+				<section class="category-detail-group">
+					<h3>زیرمقوله‌ها و انتقال</h3>
+					{% for subcategory in category.subcategories or [] %}
+						<details class="management-disclosure">
+							<summary>{{ subcategory.subcategory_name }}</summary>
+							<form method="post" data-autosave="1" action="/results/{{ project.project_id }}/axial-coding/categories/subcategory" class="form-stack">
+								<input type="hidden" name="category_id" value="{{ category.category_id }}"><input type="hidden" name="subcategory_id" value="{{ subcategory.subcategory_id }}">
+								<label>عنوان زیرمقوله<input name="title" value="{{ subcategory.subcategory_name }}" required></label>
+								<label>تعریف<textarea name="definition" rows="2">{{ subcategory.definition }}</textarea></label>
+								<label>دلیل تغییر<input name="reason"></label><button class="button button-secondary" type="submit">ذخیره زیرمقوله</button>
+							</form>
+							<form method="post" action="/results/{{ project.project_id }}/axial-coding/categories/subcategory/reassign" class="form-inline">
+								<input type="hidden" name="subcategory_id" value="{{ subcategory.subcategory_id }}"><input type="hidden" name="source_category_id" value="{{ category.category_id }}">
+								<label>انتقال زیرمقوله به مقوله<select name="target_category_id" required><option value="">انتخاب مقوله</option>{% for target in categories %}{% if target.category_id != category.category_id %}<option value="{{ target.category_id }}">{{ target.category_id }} · {{ target.category_name }}</option>{% endif %}{% endfor %}</select></label>
+								<label>دلیل<input name="reason" required></label><button class="button button-secondary" type="submit">تغییر ارتباط زیرمقوله</button>
+							</form>
+							<form method="post" action="/results/{{ project.project_id }}/axial-coding/categories/delete" class="form-inline">
+								<input type="hidden" name="entity_type" value="subcategory"><input type="hidden" name="entity_id" value="{{ subcategory.subcategory_id }}"><label>دلیل حذف منطقی<input name="reason" required></label><button class="button button-danger" type="submit">حذف منطقی زیرمقوله</button>
+							</form>
+						</details>
+					{% endfor %}
+					<details class="management-disclosure"><summary>افزودن زیرمقوله جدید</summary>
+						<form method="post" action="/results/{{ project.project_id }}/axial-coding/categories/subcategory/create" class="form-stack"><input type="hidden" name="category_id" value="{{ category.category_id }}"><label>عنوان<input name="title" required></label><label>تعریف<textarea name="definition" rows="2"></textarea></label><label>دلیل<input name="reason" required></label><button class="button button-secondary" type="submit">ایجاد زیرمقوله با شناسه پایدار</button></form>
+					</details>
+				</section>
+
+				<section class="category-detail-group">
+					<h3>انتقال مفاهیم</h3>
+					{% for concept_id in category.concept_ids or [] %}
+						<form method="post" action="/results/{{ project.project_id }}/axial-coding/categories/move-concept" class="form-inline">
+							<input type="hidden" name="concept_id" value="{{ concept_id }}"><input type="hidden" name="source_category_id" value="{{ category.category_id }}">
+							<strong>{{ concept_id }}</strong>
+							<label>انتقال به مقوله<select name="target_category_id" required><option value="">انتخاب مقوله مقصد</option>{% for target in categories %}<option value="{{ target.category_id }}">{{ target.category_id }} · {{ target.category_name }}</option>{% endfor %}</select></label>
+							<label>دلیل تغییر<input name="reason" required></label><button class="button button-secondary" type="submit">انتقال با حفظ شناسه</button>
+						</form>
+					{% else %}<p class="muted">مفهومی به این مقوله متصل نیست.</p>{% endfor %}
+				</section>
+
+				<section class="category-detail-group">
+					<h3>ویژگی‌ها</h3>
+					{% for property in category.properties or [] %}
+						<form method="post" data-autosave="1" action="/results/{{ project.project_id }}/axial-coding/categories/property" class="form-stack">
+							<input type="hidden" name="category_id" value="{{ category.category_id }}"><input type="hidden" name="property_id" value="{{ property.property_id }}">
+							<label>عنوان ویژگی<input name="title" value="{{ property.title or property.name or '' }}" required></label><label>توضیح<textarea name="definition" rows="2">{{ property.definition or '' }}</textarea></label><label>دلیل تغییر<input name="reason"></label><button class="button button-secondary" type="submit">ذخیره ویژگی</button>
+						</form>
+						<form method="post" action="/results/{{ project.project_id }}/axial-coding/categories/delete" class="form-inline"><input type="hidden" name="entity_type" value="property"><input type="hidden" name="entity_id" value="{{ property.property_id }}"><label>دلیل حذف منطقی<input name="reason" required></label><button class="button button-danger" type="submit">حذف منطقی ویژگی</button></form>
+					{% else %}<p class="muted">ویژگی‌ای ثبت نشده است.</p>{% endfor %}
+					<details class="management-disclosure"><summary>افزودن ویژگی جدید</summary><form method="post" action="/results/{{ project.project_id }}/axial-coding/categories/property/create" class="form-stack"><input type="hidden" name="category_id" value="{{ category.category_id }}"><label>عنوان<input name="title" required></label><label>تعریف<textarea name="definition" rows="2"></textarea></label><label>دلیل<input name="reason" required></label><button class="button button-secondary" type="submit">ایجاد ویژگی</button></form></details>
+				</section>
+
+				<section class="category-detail-group">
+					<h3>ابعاد</h3>
+					{% for dimension in category.dimensions or [] %}
+						<form method="post" data-autosave="1" action="/results/{{ project.project_id }}/axial-coding/categories/dimension" class="form-stack">
+							<input type="hidden" name="category_id" value="{{ category.category_id }}"><input type="hidden" name="dimension_id" value="{{ dimension.dimension_id or dimension.property_id or loop.index }}">
+							<label>عنوان بُعد<input name="title" value="{{ dimension.title or dimension.property_name or '' }}" required></label><label>دامنه بُعد<input name="range_value" value="{{ dimension.range or dimension.dimension_range or '' }}"></label><label>دلیل تغییر<input name="reason"></label><button class="button button-secondary" type="submit">ذخیره بُعد</button>
+						</form>
+						<form method="post" action="/results/{{ project.project_id }}/axial-coding/categories/delete" class="form-inline"><input type="hidden" name="entity_type" value="dimension"><input type="hidden" name="entity_id" value="{{ dimension.dimension_id or dimension.property_id or loop.index }}"><label>دلیل حذف منطقی<input name="reason" required></label><button class="button button-danger" type="submit">حذف منطقی بُعد</button></form>
+					{% else %}<p class="muted">بُعدی ثبت نشده است.</p>{% endfor %}
+					<details class="management-disclosure"><summary>افزودن بُعد جدید</summary><form method="post" action="/results/{{ project.project_id }}/axial-coding/categories/dimension/create" class="form-stack"><input type="hidden" name="category_id" value="{{ category.category_id }}"><label>عنوان<input name="title" required></label><label>دامنه<input name="range_value"></label><label>دلیل<input name="reason" required></label><button class="button button-secondary" type="submit">ایجاد بُعد</button></form></details>
+				</section>
+
+				<section class="category-detail-group">
+					<h3>ادغام، تفکیک و حذف منطقی مقوله</h3>
+					<form method="post" action="/results/{{ project.project_id }}/axial-coding/categories/delete" class="form-stack"><input type="hidden" name="entity_type" value="category"><input type="hidden" name="entity_id" value="{{ category.category_id }}"><label>دلیل حذف منطقی<input name="reason" required></label><button class="button button-danger" type="submit">حذف منطقی مقوله؛ حفظ شناسه‌ها و شواهد</button></form>
+					<form method="post" action="/results/{{ project.project_id }}/axial-coding/categories/merge" class="form-stack"><input type="hidden" name="source_category_id" value="{{ category.category_id }}"><label>ادغام با مقوله مقصد<select name="target_category_id" required><option value="">انتخاب مقصد</option>{% for target in categories %}{% if target.category_id != category.category_id %}<option value="{{ target.category_id }}">{{ target.category_id }} · {{ target.category_name }}</option>{% endif %}{% endfor %}</select></label><label>دلیل ادغام<input name="reason" required></label><button class="button button-danger" type="submit">ادغام با حفظ تاریخچه</button></form>
+					<form method="post" action="/results/{{ project.project_id }}/axial-coding/categories/split" class="form-stack"><input type="hidden" name="category_id" value="{{ category.category_id }}"><label>مفاهیم برای تفکیک<select name="concept_ids" multiple required>{% for concept_id in category.concept_ids or [] %}<option value="{{ concept_id }}">{{ concept_id }}</option>{% endfor %}</select></label><label>عنوان مقوله تفکیک‌شده<input name="title" required></label><label>تعریف<textarea name="definition" rows="2"></textarea></label><label>دلیل تفکیک<input name="reason" required></label><button class="button button-secondary" type="submit">تفکیک با حفظ شناسه مفاهیم</button></form>
+				</section>
+			</div>
+		</details>
+	</div>
+</details>
+{% else %}<p class="empty-analysis">مقوله‌ای در خروجی مرحله دوم ثبت نشده است.</p>{% endfor %}
+</div>
+
+<footer class="axial-savebar">
+	<a class="button button-secondary" href="/results/{{ project.project_id }}/axial-coding">بازگشت به داشبورد</a>
+	<a class="button button-secondary" href="/results/{{ project.project_id }}/axial-coding">گام قبل</a>
+	<span class="axial-save-status">ذخیره شد</span>
+	<a class="button button-primary" href="/results/{{ project.project_id }}/axial-coding/paradigm">ذخیره و ادامه به گام بعد</a>
+</footer>
+</div>
+{% endblock %}

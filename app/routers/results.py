@@ -4,6 +4,7 @@ import json
 from copy import deepcopy
 from datetime import datetime, timezone
 from urllib.parse import urlencode
+from uuid import uuid4
 
 from fastapi import APIRouter, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse, Response
@@ -17,6 +18,14 @@ from app.services.analysis_service import parse_stage_markdown, prepare_analysis
 from app.services.coding_table_service import build_interview_coding_table
 from app.services.evidence_validation import group_evidence_warnings
 from app.services.paradigm_service import prepare_paradigm_diagram, render_paradigm_diagram
+from app.services.axial_coding_service import (
+	axial_state,
+	effective_categories,
+	move_concept,
+	record_change,
+	run_quality_audit,
+	set_three_axis_status,
+)
 
 router = APIRouter(prefix="/results", tags=["results"])
 templates = Jinja2Templates(directory="app/templates")
@@ -824,7 +833,11 @@ def save_concept_review(
 				"keep_original": "rejected",
 				"researcher_edit": "edited",
 			}[action_decision]
-		if review_statuses and lifecycle_status != old_lifecycle_status:
+		if (
+			review_statuses
+			and lifecycle_status != old_lifecycle_status
+			and concept_id != action_concept_id
+		):
 			if not note.strip():
 				raise HTTPException(status_code=422, detail="برای تغییر وضعیت چرخه عمر، یادداشت پژوهشگر الزامی است.")
 			if lifecycle_status in {"in_progress", "deferred", "open"}:
@@ -863,8 +876,6 @@ def save_concept_review(
 		elif not decision:
 			confirmed = previously_confirmed
 
-		if decision in {"approve_suggestion", "keep_original", "researcher_edit"} and not note.strip():
-			raise HTTPException(status_code=422, detail="برای ثبت تصمیم مفهوم، یادداشت پژوهشگر الزامی است.")
 		if review_statuses and lifecycle_status in {"in_progress", "deferred", "open"}:
 			confirmed = False
 		updated_edit = {
@@ -919,7 +930,7 @@ def interview_analysis_page(request: Request, project_id: str):
 	project = _v2_project_or_409(project_id)
 	if isinstance(project, RedirectResponse):
 		return project
-	analysis = project["analysis"]["interview_analysis"]
+	return RedirectResponse(f"/results/{project_id}/axial-coding", status_code=303)
 	stored_edits = project.get("researcher_edits") or {}
 	edit = stored_edits.get("interview_analysis", {})
 	category_edits = edit.get("categories", {})
@@ -2110,6 +2121,976 @@ def save_interview_analysis(
 	update_project(project_id, researcher_edits=updated_edits)
 	mark_synthesis_runs_stale_for_source(project_id)
 	return RedirectResponse(f"/results/{project_id}/interview-analysis?saved=1", status_code=303)
+
+
+@router.get("/{project_id}/axial-coding")
+def axial_coding_dashboard(request: Request, project_id: str):
+	project = _v2_project_or_409(project_id)
+	if isinstance(project, RedirectResponse):
+		return project
+	analysis = project["analysis"]["interview_analysis"]
+	edit = (project.get("researcher_edits") or {}).get("interview_analysis", {})
+	category_edits = edit.get("categories", {})
+	relationship_edits = edit.get("relationships", {})
+	placement_edits = edit.get("paradigm_placements", {})
+	phenomenon_edit = edit.get("central_phenomenon", {})
+	quality = run_quality_audit(project)
+	pending_category = sum(
+		category_edits.get(item["category_id"], {}).get("decision") not in {"approved", "rejected"}
+		for item in analysis.get("categories", [])
+	)
+	pending_placement = sum(
+		not placement_edits.get(item["category_id"], {}).get("component_key")
+		for item in analysis.get("categories", [])
+	)
+	pending_relationship = sum(
+		relationship_edits.get(item["relationship_id"], {}).get("decision") not in {"approved", "rejected"}
+		for item in analysis.get("relationships", [])
+	)
+	pending_phenomenon = phenomenon_edit.get("decision") not in {"approved", "rejected"}
+	steps = [
+		{"number": 1, "key": "categories", "title": "مقوله‌ها و زیرمقوله‌ها", "description": "ساختار مقوله‌ها، مفاهیم، ویژگی‌ها و ابعاد",
+		 "status": "نیازمند بررسی" if pending_category or pending_placement else "تعیین تکلیف شده",
+		 "open_count": pending_category},
+		{"number": 2, "key": "paradigm", "title": "جایگاه پارادایمی", "description": "تخصیص مقوله‌ها به مؤلفه‌های مدل",
+		 "status": "نیازمند بررسی" if pending_placement else "تعیین تکلیف شده",
+		 "open_count": pending_placement},
+		{"number": 3, "key": "relationships", "title": "روابط میان مقوله‌ها", "description": "منطق، شاهد و تصمیم رابطه‌ها",
+		 "status": "نیازمند بررسی" if pending_relationship else "تعیین تکلیف شده",
+		 "open_count": pending_relationship},
+		{"number": 4, "key": "phenomenon", "title": "پدیده محوری مصاحبه", "description": "تبیین پدیده در سطح همین مصاحبه",
+		 "status": "نیازمند بررسی" if pending_phenomenon else "تعیین تکلیف شده",
+		 "open_count": 1 if pending_phenomenon else 0},
+		{"number": 5, "key": "final", "title": "مرور نهایی و جدول جامع", "description": "جمعبندی داده‌های ذخیره‌شده و کنترل کیفیت",
+		 "status": "آماده مرور" if quality["status"] != "invalid" else "دارای موارد باز",
+		 "open_count": quality["open_count"]},
+	]
+	progress_total = sum(step["open_count"] for step in steps[:4])
+	progress_done = max(
+		0,
+		len(analysis.get("categories", []))
+		+ len(analysis.get("relationships", []))
+		+ (1 if phenomenon_edit.get("decision") else 0)
+		- progress_total,
+	)
+	progress_denominator = len(analysis.get("categories", [])) + len(analysis.get("relationships", [])) + 1
+	progress_percent = round(progress_done * 100 / progress_denominator) if progress_denominator else 100
+	return templates.TemplateResponse(
+		request=request,
+		name="axial_dashboard.html",
+		context={
+			"project": project,
+			"analysis": analysis,
+			"steps": steps,
+			"quality": quality,
+			"progress_percent": progress_percent,
+			"progress_done": progress_done,
+			"progress_denominator": progress_denominator,
+			"open_count": quality["open_count"] + progress_total,
+		},
+	)
+
+
+@router.get("/{project_id}/axial-coding/categories")
+def axial_categories_page(request: Request, project_id: str):
+	project = _v2_project_or_409(project_id)
+	if isinstance(project, RedirectResponse):
+		return project
+	analysis = project["analysis"]["interview_analysis"]
+	edit = ((project.get("researcher_edits") or {}).get("interview_analysis") or {})
+	state = axial_state(project)
+	categories = effective_categories(project)
+	reviews = {
+		item["concept_id"]: item
+		for item in (project.get("analysis") or {}).get("concept_reviews", [])
+		if item.get("concept_id")
+	}
+	concept_titles = {}
+	for item in project.get("concepts", []):
+		concept_id = item.get("concept_id")
+		if not concept_id:
+			continue
+		review = reviews.get(concept_id, {})
+		concept_titles[concept_id] = {
+			**item,
+			"title": review.get("final_concept") or item.get("original_concept") or concept_id,
+			"paragraph_ids": list(dict.fromkeys([
+				*item.get("paragraph_ids", []),
+				*( [review["paragraph_id"]] if review.get("paragraph_id") else [] ),
+				*[evidence.get("paragraph_id") for evidence in review.get("evidence", []) if evidence.get("paragraph_id")],
+			])),
+			"evidence": review.get("evidence", []),
+		}
+	return templates.TemplateResponse(
+		request=request,
+		name="axial_categories.html",
+		context={
+			"project": project,
+			"analysis": analysis,
+			"categories": categories,
+			"category_edits": edit.get("categories", {}),
+			"concept_titles": concept_titles,
+			"state": state,
+			"quality": run_quality_audit(project),
+			"current_step": 1,
+		},
+	)
+
+
+@router.post("/{project_id}/axial-coding/categories/move-concept")
+def axial_move_concept(
+	project_id: str,
+	concept_id: str = Form(...),
+	source_category_id: str = Form(...),
+	target_category_id: str = Form(...),
+	reason: str = Form(...),
+):
+	project = _v2_project_or_409(project_id)
+	if isinstance(project, RedirectResponse):
+		return project
+	if not reason.strip():
+		raise HTTPException(status_code=422, detail="برای انتقال مفهوم، دلیل پژوهشگر الزامی است.")
+	analysis = project["analysis"]["interview_analysis"]
+	category_ids = {item["category_id"] for item in analysis.get("categories", [])}
+	if source_category_id not in category_ids or target_category_id not in category_ids:
+		raise HTTPException(status_code=422, detail="مقوله مبدأ یا مقصد معتبر نیست.")
+	if concept_id not in {
+		concept
+		for category in analysis.get("categories", [])
+		for concept in category.get("concept_ids", [])
+	}:
+		raise HTTPException(status_code=404, detail="مفهوم پیدا نشد.")
+	updated_edits = dict(project.get("researcher_edits") or {})
+	state = axial_state({"researcher_edits": updated_edits})
+	move_concept(state, concept_id, source_category_id, target_category_id, reason)
+	updated_edits["axial_coding"] = state
+	update_project(project_id, researcher_edits=updated_edits)
+	mark_synthesis_runs_stale_for_source(project_id)
+	return RedirectResponse(f"/results/{project_id}/axial-coding/categories?saved=1", status_code=303)
+
+
+@router.post("/{project_id}/axial-coding/categories/edit")
+def axial_category_edit(
+	project_id: str,
+	category_id: str = Form(...),
+	title: str = Form(...),
+	definition: str = Form(""),
+	reason: str = Form(""),
+):
+	project = _v2_project_or_409(project_id)
+	if isinstance(project, RedirectResponse):
+		return project
+	if not title.strip():
+		raise HTTPException(status_code=422, detail="عنوان مقوله نباید خالی باشد.")
+	analysis = project["analysis"]["interview_analysis"]
+	original = next(
+		(item for item in analysis.get("categories", []) if item.get("category_id") == category_id),
+		None,
+	)
+	if original is None:
+		raise HTTPException(status_code=404, detail="مقوله پیدا نشد.")
+	updated_edits = dict(project.get("researcher_edits") or {})
+	state = axial_state({"researcher_edits": updated_edits})
+	overrides = state.setdefault("category_overrides", {})
+	old = overrides.get(category_id, {})
+	old_title = old.get("category_name", original["category_name"])
+	old_definition = old.get("definition", original.get("definition", ""))
+	record_change(state, record_type="category", record_id=category_id, field="category_name", old_value=old_title, new_value=title.strip(), reason=reason)
+	record_change(state, record_type="category", record_id=category_id, field="definition", old_value=old_definition, new_value=definition.strip(), reason=reason)
+	overrides[category_id] = {**old, "category_name": title.strip(), "definition": definition.strip()}
+	set_three_axis_status(state, "category", category_id, researcher_status="اصلاح و تأیید", validity_status="نیازمند بازبینی")
+	updated_edits["axial_coding"] = state
+	update_project(project_id, researcher_edits=updated_edits)
+	mark_synthesis_runs_stale_for_source(project_id)
+	return RedirectResponse(f"/results/{project_id}/axial-coding/categories?saved=1", status_code=303)
+
+
+@router.post("/{project_id}/axial-coding/categories/property")
+def axial_property_edit(
+	project_id: str,
+	category_id: str = Form(...),
+	property_id: str = Form(...),
+	title: str = Form(...),
+	definition: str = Form(""),
+	reason: str = Form(""),
+):
+	project = _v2_project_or_409(project_id)
+	if isinstance(project, RedirectResponse):
+		return project
+	if not title.strip():
+		raise HTTPException(status_code=422, detail="عنوان ویژگی نباید خالی باشد.")
+	updated_edits = dict(project.get("researcher_edits") or {})
+	state = axial_state({"researcher_edits": updated_edits})
+	key = f"{category_id}:{property_id}"
+	old = state.setdefault("property_overrides", {}).get(key, {})
+	record_change(state, record_type="property", record_id=property_id, field="title", old_value=old.get("title", ""), new_value=title.strip(), reason=reason)
+	state["property_overrides"][key] = {"title": title.strip(), "definition": definition.strip()}
+	set_three_axis_status(state, "property", property_id, researcher_status="اصلاح و تأیید", validity_status="نیازمند بازبینی")
+	updated_edits["axial_coding"] = state
+	update_project(project_id, researcher_edits=updated_edits)
+	mark_synthesis_runs_stale_for_source(project_id)
+	return RedirectResponse(f"/results/{project_id}/axial-coding/categories?saved=1", status_code=303)
+
+
+@router.post("/{project_id}/axial-coding/categories/subcategory")
+def axial_subcategory_edit(
+	project_id: str,
+	category_id: str = Form(...),
+	subcategory_id: str = Form(...),
+	title: str = Form(...),
+	definition: str = Form(""),
+	reason: str = Form(""),
+):
+	project = _v2_project_or_409(project_id)
+	if isinstance(project, RedirectResponse):
+		return project
+	if not title.strip():
+		raise HTTPException(status_code=422, detail="عنوان زیرمقوله نباید خالی باشد.")
+	analysis = project["analysis"]["interview_analysis"]
+	category = next(
+		(item for item in analysis.get("categories", []) if item.get("category_id") == category_id),
+		None,
+	)
+	if category is None:
+		raise HTTPException(status_code=404, detail="مقوله پیدا نشد.")
+	original = next(
+		(item for item in category.get("subcategories", []) if item.get("subcategory_id") == subcategory_id),
+		None,
+	)
+	if original is None:
+		raise HTTPException(status_code=404, detail="زیرمقوله پیدا نشد.")
+	updated_edits = dict(project.get("researcher_edits") or {})
+	state = axial_state({"researcher_edits": updated_edits})
+	key = f"{category_id}:{subcategory_id}"
+	old = state.setdefault("subcategory_overrides", {}).get(key, {})
+	record_change(state, record_type="subcategory", record_id=subcategory_id, field="title", old_value=old.get("title", original.get("subcategory_name", "")), new_value=title.strip(), reason=reason)
+	record_change(state, record_type="subcategory", record_id=subcategory_id, field="definition", old_value=old.get("definition", original.get("definition", "")), new_value=definition.strip(), reason=reason)
+	state["subcategory_overrides"][key] = {"title": title.strip(), "definition": definition.strip()}
+	set_three_axis_status(state, "subcategory", subcategory_id, researcher_status="اصلاح و تأیید", validity_status="نیازمند بازبینی")
+	updated_edits["axial_coding"] = state
+	update_project(project_id, researcher_edits=updated_edits)
+	mark_synthesis_runs_stale_for_source(project_id)
+	return RedirectResponse(f"/results/{project_id}/axial-coding/categories?saved=1", status_code=303)
+
+
+@router.post("/{project_id}/axial-coding/categories/subcategory/reassign")
+def axial_reassign_subcategory(
+	project_id: str,
+	subcategory_id: str = Form(...),
+	source_category_id: str = Form(...),
+	target_category_id: str = Form(...),
+	reason: str = Form(...),
+):
+	project = _v2_project_or_409(project_id)
+	if isinstance(project, RedirectResponse):
+		return project
+	if source_category_id == target_category_id:
+		raise HTTPException(status_code=422, detail="مقوله مبدأ و مقصد زیرمقوله نباید یکسان باشند.")
+	if not reason.strip():
+		raise HTTPException(status_code=422, detail="دلیل تغییر رابطه زیرمقوله الزامی است.")
+	updated_edits = dict(project.get("researcher_edits") or {})
+	state = axial_state({"researcher_edits": updated_edits})
+	assignments = state.setdefault("subcategory_assignments", {})
+	old = assignments.get(subcategory_id, {})
+	assignments[subcategory_id] = {
+		"subcategory_id": subcategory_id,
+		"previous_category_id": old.get("category_id", source_category_id),
+		"category_id": target_category_id,
+		"reason": reason.strip(),
+		"changed_at": datetime.now(timezone.utc).isoformat(),
+		"history": [
+			*old.get("history", []),
+			{"from": old.get("category_id", source_category_id), "to": target_category_id, "reason": reason.strip(), "changed_at": datetime.now(timezone.utc).isoformat()},
+		],
+	}
+	record_change(state, record_type="subcategory_assignment", record_id=subcategory_id, field="category_id", old_value=old.get("category_id", source_category_id), new_value=target_category_id, reason=reason)
+	set_three_axis_status(state, "subcategory", subcategory_id, researcher_status="اصلاح و تأیید", validity_status="نیازمند بازبینی")
+	updated_edits["axial_coding"] = state
+	update_project(project_id, researcher_edits=updated_edits)
+	mark_synthesis_runs_stale_for_source(project_id)
+	return RedirectResponse(f"/results/{project_id}/axial-coding/categories?saved=1", status_code=303)
+
+
+@router.post("/{project_id}/axial-coding/categories/dimension")
+def axial_dimension_edit(
+	project_id: str,
+	category_id: str = Form(...),
+	dimension_id: str = Form(...),
+	title: str = Form(...),
+	range_value: str = Form(""),
+	reason: str = Form(""),
+):
+	project = _v2_project_or_409(project_id)
+	if isinstance(project, RedirectResponse):
+		return project
+	if not title.strip():
+		raise HTTPException(status_code=422, detail="عنوان بُعد نباید خالی باشد.")
+	updated_edits = dict(project.get("researcher_edits") or {})
+	state = axial_state({"researcher_edits": updated_edits})
+	key = f"{category_id}:{dimension_id}"
+	old = state.setdefault("dimension_overrides", {}).get(key, {})
+	record_change(state, record_type="dimension", record_id=dimension_id, field="title", old_value=old.get("title", ""), new_value=title.strip(), reason=reason)
+	record_change(state, record_type="dimension", record_id=dimension_id, field="range", old_value=old.get("range", ""), new_value=range_value.strip(), reason=reason)
+	state["dimension_overrides"][key] = {"title": title.strip(), "range": range_value.strip()}
+	set_three_axis_status(state, "dimension", dimension_id, researcher_status="اصلاح و تأیید", validity_status="نیازمند بازبینی")
+	updated_edits["axial_coding"] = state
+	update_project(project_id, researcher_edits=updated_edits)
+	mark_synthesis_runs_stale_for_source(project_id)
+	return RedirectResponse(f"/results/{project_id}/axial-coding/categories?saved=1", status_code=303)
+
+
+@router.post("/{project_id}/axial-coding/categories/create")
+def axial_create_category(
+	project_id: str,
+	title: str = Form(...),
+	definition: str = Form(""),
+	reason: str = Form(...),
+):
+	project = _v2_project_or_409(project_id)
+	if isinstance(project, RedirectResponse):
+		return project
+	if not title.strip() or not reason.strip():
+		raise HTTPException(status_code=422, detail="عنوان و دلیل ایجاد مقوله الزامی است.")
+	updated_edits = dict(project.get("researcher_edits") or {})
+	state = axial_state({"researcher_edits": updated_edits})
+	category_id = f"CAT-{uuid4().hex[:8].upper()}"
+	state.setdefault("category_overrides", {})[category_id] = {
+		"category_id": category_id,
+		"category_name": title.strip(),
+		"definition": definition.strip(),
+		"concept_ids": [],
+		"subcategories": [],
+		"properties": [],
+		"dimensions": [],
+		"existence_status": "created",
+		"evidence": [],
+	}
+	record_change(state, record_type="category", record_id=category_id, field="created", old_value=None, new_value=title.strip(), reason=reason)
+	set_three_axis_status(state, "category", category_id, ai_status="تولید نشده", researcher_status="در حال بررسی", validity_status="نیازمند بازبینی")
+	updated_edits["axial_coding"] = state
+	update_project(project_id, researcher_edits=updated_edits)
+	mark_synthesis_runs_stale_for_source(project_id)
+	return RedirectResponse(f"/results/{project_id}/axial-coding/categories?saved=1", status_code=303)
+
+
+@router.post("/{project_id}/axial-coding/categories/subcategory/create")
+def axial_create_subcategory(
+	project_id: str,
+	category_id: str = Form(...),
+	title: str = Form(...),
+	definition: str = Form(""),
+	reason: str = Form(...),
+):
+	project = _v2_project_or_409(project_id)
+	if isinstance(project, RedirectResponse):
+		return project
+	if not title.strip() or not reason.strip():
+		raise HTTPException(status_code=422, detail="عنوان و دلیل ایجاد زیرمقوله الزامی است.")
+	updated_edits = dict(project.get("researcher_edits") or {})
+	state = axial_state({"researcher_edits": updated_edits})
+	subcategory_id = f"SUB-{uuid4().hex[:8].upper()}"
+	created = state.setdefault("created_subcategories", {})
+	created[subcategory_id] = {
+		"subcategory_id": subcategory_id,
+		"category_id": category_id,
+		"subcategory_name": title.strip(),
+		"definition": definition.strip(),
+		"concept_ids": [],
+		"evidence": [],
+		"existence_status": "created",
+		"reason": reason.strip(),
+	}
+	record_change(state, record_type="subcategory", record_id=subcategory_id, field="created", old_value=None, new_value={"category_id": category_id, "title": title.strip()}, reason=reason)
+	set_three_axis_status(state, "subcategory", subcategory_id, ai_status="تولید نشده", researcher_status="در حال بررسی", validity_status="نیازمند بازبینی")
+	updated_edits["axial_coding"] = state
+	update_project(project_id, researcher_edits=updated_edits)
+	mark_synthesis_runs_stale_for_source(project_id)
+	return RedirectResponse(f"/results/{project_id}/axial-coding/categories?saved=1", status_code=303)
+
+
+@router.post("/{project_id}/axial-coding/categories/property/create")
+def axial_create_property(
+	project_id: str,
+	category_id: str = Form(...),
+	title: str = Form(...),
+	definition: str = Form(""),
+	reason: str = Form(...),
+):
+	project = _v2_project_or_409(project_id)
+	if isinstance(project, RedirectResponse):
+		return project
+	if not title.strip() or not reason.strip():
+		raise HTTPException(status_code=422, detail="عنوان و دلیل ایجاد ویژگی الزامی است.")
+	updated_edits = dict(project.get("researcher_edits") or {})
+	state = axial_state({"researcher_edits": updated_edits})
+	property_id = f"PROP-{uuid4().hex[:8].upper()}"
+	state.setdefault("created_properties", {})[property_id] = {
+		"property_id": property_id,
+		"category_id": category_id,
+		"title": title.strip(),
+		"definition": definition.strip(),
+		"existence_status": "created",
+		"reason": reason.strip(),
+	}
+	record_change(state, record_type="property", record_id=property_id, field="created", old_value=None, new_value=title.strip(), reason=reason)
+	set_three_axis_status(state, "property", property_id, ai_status="تولید نشده", researcher_status="در حال بررسی", validity_status="نیازمند بازبینی")
+	updated_edits["axial_coding"] = state
+	update_project(project_id, researcher_edits=updated_edits)
+	mark_synthesis_runs_stale_for_source(project_id)
+	return RedirectResponse(f"/results/{project_id}/axial-coding/categories?saved=1", status_code=303)
+
+
+@router.post("/{project_id}/axial-coding/categories/dimension/create")
+def axial_create_dimension(
+	project_id: str,
+	category_id: str = Form(...),
+	title: str = Form(...),
+	range_value: str = Form(""),
+	reason: str = Form(...),
+):
+	project = _v2_project_or_409(project_id)
+	if isinstance(project, RedirectResponse):
+		return project
+	if not title.strip() or not reason.strip():
+		raise HTTPException(status_code=422, detail="عنوان و دلیل ایجاد بُعد الزامی است.")
+	updated_edits = dict(project.get("researcher_edits") or {})
+	state = axial_state({"researcher_edits": updated_edits})
+	dimension_id = f"DIM-{uuid4().hex[:8].upper()}"
+	state.setdefault("created_dimensions", {})[dimension_id] = {
+		"dimension_id": dimension_id,
+		"category_id": category_id,
+		"title": title.strip(),
+		"range": range_value.strip(),
+		"existence_status": "created",
+		"reason": reason.strip(),
+	}
+	record_change(state, record_type="dimension", record_id=dimension_id, field="created", old_value=None, new_value=title.strip(), reason=reason)
+	set_three_axis_status(state, "dimension", dimension_id, ai_status="تولید نشده", researcher_status="در حال بررسی", validity_status="نیازمند بازبینی")
+	updated_edits["axial_coding"] = state
+	update_project(project_id, researcher_edits=updated_edits)
+	mark_synthesis_runs_stale_for_source(project_id)
+	return RedirectResponse(f"/results/{project_id}/axial-coding/categories?saved=1", status_code=303)
+
+
+@router.post("/{project_id}/axial-coding/categories/delete")
+def axial_logical_delete(
+	project_id: str,
+	entity_type: str = Form(...),
+	entity_id: str = Form(...),
+	reason: str = Form(...),
+):
+	project = _v2_project_or_409(project_id)
+	if isinstance(project, RedirectResponse):
+		return project
+	if entity_type not in {"category", "subcategory", "property", "dimension"}:
+		raise HTTPException(status_code=422, detail="نوع موجودیت قابل حذف منطقی معتبر نیست.")
+	if not reason.strip():
+		raise HTTPException(status_code=422, detail="دلیل حذف منطقی الزامی است.")
+	updated_edits = dict(project.get("researcher_edits") or {})
+	state = axial_state({"researcher_edits": updated_edits})
+	deletions = state.setdefault("logical_deletions", {})
+	deletions[entity_id] = {
+		"entity_type": entity_type,
+		"entity_id": entity_id,
+		"status": "deleted",
+		"reason": reason.strip(),
+		"changed_at": datetime.now(timezone.utc).isoformat(),
+	}
+	record_change(state, record_type=entity_type, record_id=entity_id, field="existence_status", old_value="active", new_value="deleted", reason=reason)
+	set_three_axis_status(state, entity_type, entity_id, researcher_status="رد", validity_status="نیازمند بازبینی")
+	updated_edits["axial_coding"] = state
+	update_project(project_id, researcher_edits=updated_edits)
+	mark_synthesis_runs_stale_for_source(project_id)
+	return RedirectResponse(f"/results/{project_id}/axial-coding/categories?saved=1", status_code=303)
+
+
+@router.post("/{project_id}/axial-coding/categories/merge")
+def axial_merge_categories(
+	project_id: str,
+	source_category_id: str = Form(...),
+	target_category_id: str = Form(...),
+	reason: str = Form(...),
+):
+	project = _v2_project_or_409(project_id)
+	if isinstance(project, RedirectResponse):
+		return project
+	if not reason.strip():
+		raise HTTPException(status_code=422, detail="برای ادغام مقوله‌ها، دلیل الزامی است.")
+	if source_category_id == target_category_id:
+		raise HTTPException(status_code=422, detail="مقوله مبدأ و مقصد نباید یکسان باشند.")
+	analysis = project["analysis"]["interview_analysis"]
+	categories = {item["category_id"]: item for item in analysis.get("categories", [])}
+	if source_category_id not in categories or target_category_id not in categories:
+		raise HTTPException(status_code=404, detail="مقوله مبدأ یا مقصد پیدا نشد.")
+	updated_edits = dict(project.get("researcher_edits") or {})
+	state = axial_state({"researcher_edits": updated_edits})
+	overrides = state.setdefault("category_overrides", {})
+	source = overrides.setdefault(source_category_id, {})
+	target = overrides.setdefault(target_category_id, {})
+	source["existence_status"] = "merged"
+	source["merged_into"] = target_category_id
+	target["merged_source_ids"] = list(dict.fromkeys([
+		*target.get("merged_source_ids", []),
+		source_category_id,
+	]))
+	record_change(state, record_type="category_merge", record_id=source_category_id, field="merged_into", old_value=None, new_value=target_category_id, reason=reason)
+	for concept_id in categories[source_category_id].get("concept_ids", []):
+		move_concept(state, concept_id, source_category_id, target_category_id, reason)
+	set_three_axis_status(state, "category", source_category_id, researcher_status="اصلاح و تأیید", validity_status="نیازمند بازبینی")
+	set_three_axis_status(state, "category", target_category_id, researcher_status="اصلاح و تأیید", validity_status="نیازمند بازبینی")
+	updated_edits["axial_coding"] = state
+	update_project(project_id, researcher_edits=updated_edits)
+	mark_synthesis_runs_stale_for_source(project_id)
+	return RedirectResponse(f"/results/{project_id}/axial-coding/categories?saved=1", status_code=303)
+
+
+@router.post("/{project_id}/axial-coding/categories/split")
+def axial_split_category(
+	project_id: str,
+	category_id: str = Form(...),
+	concept_ids: list[str] = Form(...),
+	title: str = Form(...),
+	definition: str = Form(""),
+	reason: str = Form(...),
+):
+	project = _v2_project_or_409(project_id)
+	if isinstance(project, RedirectResponse):
+		return project
+	if not title.strip() or not reason.strip() or not concept_ids:
+		raise HTTPException(status_code=422, detail="عنوان، دلیل و حداقل یک مفهوم برای تفکیک الزامی است.")
+	analysis = project["analysis"]["interview_analysis"]
+	category = next(
+		(item for item in analysis.get("categories", []) if item.get("category_id") == category_id),
+		None,
+	)
+	if category is None:
+		raise HTTPException(status_code=404, detail="مقوله پیدا نشد.")
+	original_ids = set(category.get("concept_ids", []))
+	if not set(concept_ids).issubset(original_ids):
+		raise HTTPException(status_code=422, detail="همه مفاهیم تفکیک‌شده باید به مقوله اصلی متصل باشند.")
+	updated_edits = dict(project.get("researcher_edits") or {})
+	state = axial_state({"researcher_edits": updated_edits})
+	new_id = f"SPLIT-{uuid4().hex[:8].upper()}"
+	splits = state.setdefault("splits", {})
+	splits[new_id] = {
+		"split_category_id": new_id,
+		"source_category_id": category_id,
+		"title": title.strip(),
+		"definition": definition.strip(),
+		"concept_ids": list(dict.fromkeys(concept_ids)),
+		"reason": reason.strip(),
+		"created_at": datetime.now(timezone.utc).isoformat(),
+	}
+	record_change(state, record_type="category_split", record_id=new_id, field="source_category_id", old_value=category_id, new_value=new_id, reason=reason)
+	for concept_id in concept_ids:
+		move_concept(state, concept_id, category_id, new_id, reason)
+	set_three_axis_status(state, "category", category_id, researcher_status="اصلاح و تأیید", validity_status="نیازمند بازبینی")
+	set_three_axis_status(state, "category", new_id, researcher_status="بررسی‌نشده", validity_status="نیازمند بازبینی")
+	updated_edits["axial_coding"] = state
+	update_project(project_id, researcher_edits=updated_edits)
+	mark_synthesis_runs_stale_for_source(project_id)
+	return RedirectResponse(f"/results/{project_id}/axial-coding/categories?saved=1", status_code=303)
+
+
+@router.get("/{project_id}/axial-coding/paradigm")
+def axial_paradigm_page(request: Request, project_id: str):
+	project = _v2_project_or_409(project_id)
+	if isinstance(project, RedirectResponse):
+		return project
+	analysis = project["analysis"]["interview_analysis"]
+	edit = (project.get("researcher_edits") or {}).get("interview_analysis", {})
+	state = axial_state(project)
+	categories = effective_categories(project)
+	placements = state.get("placement_decisions") or {}
+	component_labels = {
+		"causal_conditions": "شرایط علّی",
+		"contextual_conditions": "شرایط زمینه‌ای",
+		"intervening_conditions": "شرایط مداخله‌گر",
+		"action_interaction_strategies": "راهبردهای کنش و تعامل",
+		"consequences": "پیامدها",
+	}
+	code_labels = {
+		"شرایط علّی": "causal_conditions",
+		"شرایط زمینه‌ای": "contextual_conditions",
+		"شرایط مداخله‌گر": "intervening_conditions",
+		"راهبردهای کنش و تعامل": "action_interaction_strategies",
+		"پیامدها": "consequences",
+	}
+	concept_reviews = {
+		item["concept_id"]: item
+		for item in project["analysis"].get("concept_reviews", [])
+		if item.get("concept_id")
+	}
+	ai_suggestions = {}
+	model = analysis.get("paradigm_model", {})
+	for category in categories:
+		category_id = category["category_id"]
+		suggestions = {}
+		for concept_id in category.get("concept_ids", []) or []:
+			review = concept_reviews.get(concept_id, {})
+			component_key = code_labels.get(review.get("suggested_code") or review.get("original_code"))
+			if not component_key:
+				continue
+			suggestion = suggestions.setdefault(component_key, {
+				"component_key": component_key,
+				"label": component_labels[component_key],
+				"reason": "",
+				"evidence": [],
+				"concept_ids": [],
+			})
+			suggestion["concept_ids"].append(concept_id)
+			if review.get("code_reason") and not suggestion["reason"]:
+				suggestion["reason"] = review["code_reason"]
+			for evidence in review.get("evidence", []) or []:
+				if evidence not in suggestion["evidence"]:
+					suggestion["evidence"].append(evidence)
+		for component_key, items in model.items():
+			if component_key not in component_labels:
+				continue
+			if isinstance(items, dict):
+				items = [items]
+			for item in items or []:
+				category_ids = item.get("category_ids", []) or []
+				if category_id not in category_ids:
+					continue
+				suggestion = suggestions.setdefault(component_key, {
+					"component_key": component_key,
+					"label": component_labels[component_key],
+					"reason": item.get("selection_reason") or item.get("reason") or category.get("category_reason") or "",
+					"evidence": [],
+					"concept_ids": list(item.get("concept_ids", []) or item.get("supporting_concept_ids", []) or []),
+				})
+				for evidence in item.get("evidence", []) or []:
+					if evidence not in suggestion["evidence"]:
+						suggestion["evidence"].append(evidence)
+		if not suggestions:
+			for evidence in category.get("evidence", []) or []:
+				if isinstance(evidence, dict):
+					suggestions.setdefault("unassigned", {
+						"component_key": "unassigned",
+						"label": "نیازمند پیشنهاد پژوهشگر",
+						"reason": "هوش مصنوعی جایگاه قطعی پیشنهاد نکرده است.",
+						"evidence": [evidence],
+						"concept_ids": list(category.get("concept_ids", []) or []),
+					})
+		ai_suggestions[category_id] = list(suggestions.values())
+
+	component_summaries = [
+		{"key": "causal_conditions", "label": "شرایط علّی", "categories": []},
+		{"key": "central_phenomenon", "label": "پدیده محوری", "categories": []},
+		{"key": "contextual_conditions", "label": "شرایط زمینه‌ای", "categories": []},
+		{"key": "intervening_conditions", "label": "شرایط مداخله‌گر", "categories": []},
+		{"key": "action_interaction_strategies", "label": "راهبردهای کنش و تعامل", "categories": []},
+		{"key": "consequences", "label": "پیامدها", "categories": []},
+		{"key": "unassigned", "label": "نامشخص / بدون جایگاه قطعی", "categories": []},
+	]
+	summary_by_key = {item["key"]: item for item in component_summaries}
+	phenomenon = analysis.get("central_phenomenon") or {}
+	phenomenon_title = phenomenon.get("title") if isinstance(phenomenon, dict) else ""
+	if phenomenon_title:
+		summary_by_key["central_phenomenon"]["categories"].append(phenomenon_title)
+	for category in categories:
+		category_id = category["category_id"]
+		record_map = placements.get(category_id, {}) or {}
+		record = next(iter(record_map.values()), None)
+		if not record:
+			continue
+		component_key = record.get("component_key")
+		if component_key in summary_by_key:
+			summary_by_key[component_key]["categories"].append(category["category_name"])
+	all_placements_complete = all(
+		bool(placements.get(category["category_id"], {}))
+		for category in categories
+	)
+	return templates.TemplateResponse(
+		request=request,
+		name="axial_paradigm.html",
+		context={
+			"project": project,
+			"analysis": analysis,
+			"categories": categories,
+			"placements": placements,
+			"ai_suggestions": ai_suggestions,
+			"legacy_placements": edit.get("paradigm_placements", {}),
+			"quality": run_quality_audit(project),
+			"current_step": 2,
+			"all_placements_complete": all_placements_complete,
+			"component_summaries": component_summaries,
+			"components": [
+				("causal_conditions", "شرایط علّی"),
+				("contextual_conditions", "شرایط زمینه‌ای"),
+				("intervening_conditions", "شرایط مداخله‌گر"),
+				("action_interaction_strategies", "راهبردهای کنش و تعامل"),
+				("consequences", "پیامدها"),
+			],
+		},
+	)
+
+
+@router.post("/{project_id}/axial-coding/paradigm/placement")
+def axial_placement_decision(
+	project_id: str,
+	category_id: str = Form(...),
+	component_key: str = Form(...),
+	researcher_status: str = Form(...),
+	reason: str = Form(""),
+):
+	project = _v2_project_or_409(project_id)
+	if isinstance(project, RedirectResponse):
+		return project
+	allowed = {
+		"unassigned", "causal_conditions", "contextual_conditions",
+		"intervening_conditions", "action_interaction_strategies", "consequences",
+	}
+	allowed_status = {"تأیید", "اصلاح و تأیید", "رد", "نامشخص", "در حال بررسی"}
+	if component_key not in allowed:
+		raise HTTPException(status_code=422, detail="جایگاه پارادایمی معتبر نیست.")
+	if researcher_status not in allowed_status:
+		raise HTTPException(status_code=422, detail="وضعیت تصمیم پژوهشگر معتبر نیست.")
+	analysis = project["analysis"]["interview_analysis"]
+	if category_id not in {item["category_id"] for item in analysis.get("categories", [])}:
+		raise HTTPException(status_code=404, detail="مقوله پیدا نشد.")
+	updated_edits = dict(project.get("researcher_edits") or {})
+	state = axial_state({"researcher_edits": updated_edits})
+	placements = state.setdefault("placement_decisions", {})
+	old = placements.get(category_id, {})
+	record_change(
+		state,
+		record_type="paradigm_placement",
+		record_id=category_id,
+		field=f"placement:{component_key}",
+		old_value=old,
+		new_value={"component_key": component_key, "researcher_status": researcher_status, "reason": reason.strip()},
+		reason=reason,
+	)
+	entry = {
+		component_key: {
+		"component_key": component_key,
+		"ai_status": "تولید شده",
+		"researcher_status": researcher_status,
+		"validity_status": "معتبر" if researcher_status == "تأیید" else "نیازمند بازبینی",
+		"reason": reason.strip(),
+		"history": [
+			*old.get(component_key, {}).get("history", []),
+			{"status": researcher_status, "reason": reason.strip(), "changed_at": datetime.now(timezone.utc).isoformat()},
+		],
+		}
+	}
+	placements[category_id] = entry
+	set_three_axis_status(state, "paradigm_placement", f"{category_id}:{component_key}", researcher_status=researcher_status, validity_status=entry[component_key]["validity_status"])
+	updated_edits["axial_coding"] = state
+	update_project(project_id, researcher_edits=updated_edits)
+	mark_synthesis_runs_stale_for_source(project_id)
+	return RedirectResponse(f"/results/{project_id}/axial-coding/paradigm?saved=1", status_code=303)
+
+
+@router.get("/{project_id}/axial-coding/relationships")
+def axial_relationships_page(request: Request, project_id: str):
+	project = _v2_project_or_409(project_id)
+	if isinstance(project, RedirectResponse):
+		return project
+	analysis = project["analysis"]["interview_analysis"]
+	edit = (project.get("researcher_edits") or {}).get("interview_analysis", {})
+	state = axial_state(project)
+	return templates.TemplateResponse(
+		request=request,
+		name="axial_relationships.html",
+		context={
+			"project": project,
+			"analysis": analysis,
+			"relationships": analysis.get("relationships", []),
+			"relationship_edits": edit.get("relationships", {}),
+			"state": state,
+			"quality": run_quality_audit(project),
+			"current_step": 3,
+		},
+	)
+
+
+@router.post("/{project_id}/axial-coding/relationships/decision")
+def axial_relationship_decision(
+	project_id: str,
+	relationship_id: str = Form(...),
+	researcher_status: str = Form(...),
+	validity_status: str = Form(...),
+	description: str = Form(""),
+	reason: str = Form(""),
+):
+	project = _v2_project_or_409(project_id)
+	if isinstance(project, RedirectResponse):
+		return project
+	allowed_status = {"بررسی‌نشده", "در حال بررسی", "تأیید", "اصلاح و تأیید", "رد", "نامشخص"}
+	allowed_validity = set(VALIDITY_STATUSES) if False else {
+		"معتبر", "ناقص", "دارای تعارض", "نیازمند بازبینی", "نامعتبر از نظر ساختاری",
+		"دارای شاهد مستقیم", "شاهد غیرمستقیم یا استنباط تحلیلی",
+		"شواهد ناکافی", "دارای شواهد متعارض", "نقص ساختاری",
+		"نیازمند بازبینی پس از تغییرات",
+	}
+	if researcher_status not in allowed_status or validity_status not in allowed_validity:
+		raise HTTPException(status_code=422, detail="وضعیت تصمیم یا اعتبار رابطه معتبر نیست.")
+	analysis = project["analysis"]["interview_analysis"]
+	original = next(
+		(item for item in analysis.get("relationships", []) if item.get("relationship_id") == relationship_id),
+		None,
+	)
+	if original is None:
+		raise HTTPException(status_code=404, detail="رابطه پیدا نشد.")
+	updated_edits = dict(project.get("researcher_edits") or {})
+	state = axial_state({"researcher_edits": updated_edits})
+	decisions = state.setdefault("relationship_decisions", {})
+	old = decisions.get(relationship_id, {})
+	entry = {
+		"relationship_id": relationship_id,
+		"ai_status": "تولید شده",
+		"researcher_status": researcher_status,
+		"validity_status": validity_status,
+		"description": description.strip(),
+		"reason": reason.strip(),
+		"history": [
+			*old.get("history", []),
+			{"researcher_status": researcher_status, "validity_status": validity_status, "reason": reason.strip(), "changed_at": datetime.now(timezone.utc).isoformat()},
+		],
+	}
+	record_change(state, record_type="relationship", record_id=relationship_id, field="researcher_status", old_value=old.get("researcher_status"), new_value=researcher_status, reason=reason)
+	record_change(state, record_type="relationship", record_id=relationship_id, field="validity_status", old_value=old.get("validity_status"), new_value=validity_status, reason=reason)
+	decisions[relationship_id] = entry
+	set_three_axis_status(state, "relationship", relationship_id, ai_status="تولید شده", researcher_status=researcher_status, validity_status=validity_status)
+	updated_edits["axial_coding"] = state
+	update_project(project_id, researcher_edits=updated_edits)
+	mark_synthesis_runs_stale_for_source(project_id)
+	return RedirectResponse(f"/results/{project_id}/axial-coding/relationships?saved=1", status_code=303)
+
+
+@router.get("/{project_id}/axial-coding/phenomenon")
+def axial_phenomenon_page(request: Request, project_id: str):
+	project = _v2_project_or_409(project_id)
+	if isinstance(project, RedirectResponse):
+		return project
+	analysis = project["analysis"]["interview_analysis"]
+	edit = (project.get("researcher_edits") or {}).get("interview_analysis", {})
+	state = axial_state(project)
+	return templates.TemplateResponse(
+		request=request,
+		name="axial_phenomenon.html",
+		context={
+			"project": project,
+			"analysis": analysis,
+			"phenomenon": analysis.get("central_phenomenon") or {},
+			"phenomenon_edit": edit.get("central_phenomenon", {}),
+			"categories": effective_categories(project),
+			"relationships": analysis.get("relationships", []),
+			"quality": run_quality_audit(project),
+			"current_step": 4,
+			"state": state,
+		},
+	)
+
+
+@router.post("/{project_id}/axial-coding/phenomenon/decision")
+def axial_phenomenon_decision(
+	project_id: str,
+	researcher_status: str = Form(...),
+	title: str = Form(""),
+	definition: str = Form(""),
+	reason: str = Form(""),
+):
+	project = _v2_project_or_409(project_id)
+	if isinstance(project, RedirectResponse):
+		return project
+	allowed_status = {"تأیید", "اصلاح و تأیید", "رد", "نامشخص", "در حال بررسی"}
+	if researcher_status not in allowed_status:
+		raise HTTPException(status_code=422, detail="وضعیت پدیده محوری معتبر نیست.")
+	updated_edits = dict(project.get("researcher_edits") or {})
+	interview_edit = updated_edits.setdefault("interview_analysis", {})
+	state = axial_state({"researcher_edits": updated_edits})
+	old = state.setdefault("phenomenon_decision", {})
+	entry = {
+		"ai_status": "تولید شده",
+		"researcher_status": researcher_status,
+		"validity_status": "معتبر" if researcher_status in {"تأیید", "اصلاح و تأیید"} else "نیازمند بازبینی",
+		"title": title.strip(),
+		"definition": definition.strip(),
+		"reason": reason.strip(),
+		"history": [
+			*old.get("history", []),
+			{"status": researcher_status, "reason": reason.strip(), "changed_at": datetime.now(timezone.utc).isoformat()},
+		],
+	}
+	record_change(state, record_type="central_phenomenon", record_id="central_phenomenon", field="researcher_status", old_value=old.get("researcher_status"), new_value=researcher_status, reason=reason)
+	state["phenomenon_decision"] = entry
+	phenomenon_edit = dict(interview_edit.get("central_phenomenon", {}))
+	phenomenon_edit.update({
+		"title": title.strip(),
+		"definition": definition.strip(),
+		"decision": "approved" if researcher_status in {"تأیید", "اصلاح و تأیید"} else "rejected" if researcher_status == "رد" else "",
+		"decision_reason": reason.strip(),
+		"review_status": researcher_status,
+	})
+	interview_edit["central_phenomenon"] = phenomenon_edit
+	updated_edits["axial_coding"] = state
+	updated_edits["interview_analysis"] = interview_edit
+	update_project(project_id, researcher_edits=updated_edits)
+	mark_synthesis_runs_stale_for_source(project_id)
+	return RedirectResponse(f"/results/{project_id}/axial-coding/phenomenon?saved=1", status_code=303)
+
+
+@router.get("/{project_id}/axial-coding/final")
+def axial_final_page(request: Request, project_id: str):
+	project = _v2_project_or_409(project_id)
+	if isinstance(project, RedirectResponse):
+		return project
+	analysis = project["analysis"]["interview_analysis"]
+	quality = run_quality_audit(project)
+	coding_table = build_interview_coding_table(project)
+	subcategory_count = sum(
+		len(item.get("subcategories") or [])
+		for item in analysis.get("categories", [])
+	)
+	return templates.TemplateResponse(
+		request=request,
+		name="axial_final.html",
+		context={
+			"project": project,
+			"analysis": analysis,
+			"quality": quality,
+			"coding_table": coding_table,
+			"subcategory_count": subcategory_count,
+			"export_base": f"/exports/{project_id}/coding-table",
+			"current_step": 5,
+			"state": axial_state(project),
+		},
+	)
+
+
+@router.post("/{project_id}/axial-coding/final/resolve")
+def axial_resolve_quality_issue(
+	project_id: str,
+	issue_id: str = Form(...),
+	status: str = Form(...),
+	note: str = Form(""),
+):
+	project = _v2_project_or_409(project_id)
+	if isinstance(project, RedirectResponse):
+		return project
+	if status not in {"باز", "در حال رفع", "حل‌شده", "ردشده و بایگانی‌شده"}:
+		raise HTTPException(status_code=422, detail="وضعیت رفع مورد معتبر نیست.")
+	quality = run_quality_audit(project)
+	issue_ids = {item["issue_id"] for item in quality["issues"]}
+	if issue_id not in issue_ids:
+		raise HTTPException(status_code=404, detail="مورد کنترل کیفیت پیدا نشد.")
+	updated_edits = dict(project.get("researcher_edits") or {})
+	state = axial_state({"researcher_edits": updated_edits})
+	resolutions = state.setdefault("quality_resolution", {})
+	resolutions[issue_id] = {
+		"issue_id": issue_id,
+		"status": status,
+		"note": note.strip(),
+		"changed_at": datetime.now(timezone.utc).isoformat(),
+	}
+	record_change(state, record_type="quality_issue", record_id=issue_id, field="resolution_status", old_value=None, new_value=status, reason=note)
+	updated_edits["axial_coding"] = state
+	update_project(project_id, researcher_edits=updated_edits)
+	return RedirectResponse(f"/results/{project_id}/axial-coding/final?saved=1", status_code=303)
 
 
 @router.get("/{project_id}/categories")

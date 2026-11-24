@@ -1,0 +1,30 @@
+{% extends "base.html" %}
+{% block title %}کدگذاری محوری مصاحبه | {{ project.title }}{% endblock %}
+{% block content %}
+<div class="axial-page">
+<div class="breadcrumbs"><a href="/projects/{{ project.project_id }}">پروژه</a><span>/</span><span>کدگذاری محوری</span></div>
+<header class="axial-header">
+	<div><p class="eyebrow">مرحله دوم کدگذاری محوری</p><h1>داشبورد مرحله دوم</h1><p class="lede">{{ project.interview_id or 'مصاحبه' }} · {{ project.title }}</p></div>
+</header>
+<section class="axial-progress">
+	<div><p class="eyebrow">وضعیت کلی</p><h2>پیشرفت تعیین تکلیف پژوهشگر</h2>
+	<div class="axial-progress-track" role="progressbar" aria-valuemin="0" aria-valuemax="{{ progress_denominator }}" aria-valuenow="{{ progress_done }}"><span style="width: {{ progress_percent }}%"></span></div>
+	<p class="muted">{{ progress_done }} مورد از {{ progress_denominator }} مورد اصلی تعیین تکلیف شده است.</p>
+	</div><strong>{{ progress_percent }}٪</strong>
+</section>
+<div class="axial-dashboard-grid">
+	{% for step in steps %}
+	<a class="axial-dashboard-card" href="/results/{{ project.project_id }}/axial-coding/{{ step.key }}">
+		<span class="step-number">گام ۰{{ step.number }}</span>
+		<h2>{{ step.title }}</h2><p>{{ step.description }}</p>
+		<div class="axial-card-footer"><span class="status-pill">{{ step.status }}</span>{% if step.open_count %}<span class="count-tag review-count-tag">{{ step.open_count }} باز</span>{% else %}<span class="count-tag">بدون مورد باز</span>{% endif %}</div>
+	</a>
+	{% endfor %}
+</div>
+<section class="panel warning-panel" style="margin-top:16px">
+	<div class="dashboard-section-heading"><div><p class="eyebrow">موارد قابل اقدام</p><h2>کنترل کیفیت مرحله دوم</h2></div><span class="count-tag">{{ quality.open_count }}</span></div>
+	<p>{{ quality.status }} · {{ quality.issue_count }} مورد گزارش شد.</p>
+	<a class="button button-primary" href="/results/{{ project.project_id }}/axial-coding/final">بازگشت و مرور موارد نهایی</a>
+</section>
+</div>
+{% endblock %}

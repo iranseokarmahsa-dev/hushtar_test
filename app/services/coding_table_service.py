@@ -74,11 +74,12 @@ def _flatten(groups: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 def build_interview_coding_table(project: dict) -> dict[str, Any]:
 	from app.services.paradigm_service import prepare_paradigm_diagram
+	from app.services.axial_coding_service import effective_categories
 
 	analysis = project["analysis"]["interview_analysis"]
 	edit = (project.get("researcher_edits") or {}).get("interview_analysis", {})
 	category_edits = edit.get("categories", {})
-	categories = {item["category_id"]: item for item in analysis.get("categories", [])}
+	categories = {item["category_id"]: item for item in effective_categories(project)}
 	concepts = _concept_lookup(project)
 	ordered_nodes = [
 		node for node in prepare_paradigm_diagram(project)["nodes"]
@@ -89,6 +90,20 @@ def build_interview_coding_table(project: dict) -> dict[str, Any]:
 	for node in nodes:
 		for category_id in node["category_ids"]:
 			placed.setdefault(category_id, node["label"])
+	axial_state = (project.get("researcher_edits") or {}).get("axial_coding") or {}
+	placement_labels = {
+		"causal_conditions": "شرایط علّی",
+		"central_phenomenon": "مقوله یا پدیده محوری",
+		"contextual_conditions": "شرایط زمینه‌ای",
+		"intervening_conditions": "شرایط مداخله‌گر",
+		"action_interaction_strategies": "راهبردهای کنش و تعامل",
+		"consequences": "پیامدها",
+		"unassigned": UNPLACED_LABEL,
+	}
+	for category_id, records in (axial_state.get("placement_decisions") or {}).items():
+		for component_key, decision in records.items():
+			if decision.get("researcher_status") in {"تأیید", "اصلاح و تأیید"}:
+				placed.setdefault(category_id, placement_labels.get(component_key, UNPLACED_LABEL))
 	order = list(dict.fromkeys([node["label"] for node in ordered_nodes] + [UNPLACED_LABEL]))
 	by_dimension: dict[str, list[dict]] = {label: [] for label in order}
 	for category_id, category in categories.items():

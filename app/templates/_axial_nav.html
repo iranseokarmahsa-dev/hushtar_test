@@ -1,0 +1,38 @@
+<nav class="axial-nav analysis-steps" aria-label="گام‌های کدگذاری محوری مصاحبه">
+	<a class="analysis-step {% if current_step == 1 %}is-active{% endif %}" href="/results/{{ project.project_id }}/axial-coding/categories" {% if current_step == 1 %}aria-current="step"{% endif %}><b>۱</b> مقوله‌ها و زیرمقوله‌ها</a>
+	<a class="analysis-step {% if current_step == 2 %}is-active{% endif %}" href="/results/{{ project.project_id }}/axial-coding/paradigm" {% if current_step == 2 %}aria-current="step"{% endif %}><b>۲</b> جایگاه پارادایمی{% if quality and quality.open_count %}<span class="count-tag">{{ quality.open_count }}</span>{% endif %}</a>
+	<a class="analysis-step {% if current_step == 3 %}is-active{% endif %}" href="/results/{{ project.project_id }}/axial-coding/relationships" {% if current_step == 3 %}aria-current="step"{% endif %}><b>۳</b> روابط</a>
+	<a class="analysis-step {% if current_step == 4 %}is-active{% endif %}" href="/results/{{ project.project_id }}/axial-coding/phenomenon" {% if current_step == 4 %}aria-current="step"{% endif %}><b>۴</b> پدیده محوری مصاحبه</a>
+	<a class="analysis-step {% if current_step == 5 %}is-active{% endif %}" href="/results/{{ project.project_id }}/axial-coding/final" {% if current_step == 5 %}aria-current="step"{% endif %}><b>۵</b> مرور و جدول جامع</a>
+</nav>
+<div id="axial-save-status" class="alert" role="status" aria-live="polite" hidden></div>
+<script>
+(function () {
+	const status = document.getElementById('axial-save-status');
+	if (!status) return;
+	let timer = null;
+	function show(text, kind) {
+		status.hidden = false;
+		status.textContent = text;
+		status.className = 'alert ' + (kind === 'error' ? 'alert-warning' : 'alert-success');
+	}
+	function save(form) {
+		show('در حال ذخیره...', 'saving');
+		fetch(form.action, {
+			method: 'POST',
+			body: new FormData(form),
+			headers: {'X-Requested-With': 'XMLHttpRequest'}
+		}).then(response => {
+			if (!response.ok) throw new Error('HTTP ' + response.status);
+			show('ذخیره شد', 'success');
+		}).catch(() => show('ذخیره ناموفق؛ اطلاعات واردشده حفظ شده است.', 'error'));
+	}
+	document.querySelectorAll('form[data-autosave]').forEach(form => {
+		form.addEventListener('input', () => {
+			show('تغییرات ذخیره‌نشده', 'saving');
+			clearTimeout(timer);
+			timer = setTimeout(() => save(form), 1200);
+		});
+	});
+})();
+</script>

@@ -1,0 +1,116 @@
+{% extends "base.html" %}
+{% block title %}مرور نهایی و جدول جامع | {{ project.title }}{% endblock %}
+{% block content %}
+<div class="axial-page">
+<div class="breadcrumbs"><a href="/results/{{ project.project_id }}/axial-coding">داشبورد کدگذاری محوری</a><span>/</span><span>مرور نهایی</span></div>
+<header class="axial-header"><div><p class="eyebrow">گام پنجم از پنج گام</p><h1>مرور نهایی و جدول جامع کدگذاری محوری</h1><p class="lede">اطلاعات ذخیره‌شده تجمیع شده‌اند؛ در این صفحه تحلیل هوش مصنوعی دوباره اجرا نمی‌شود.</p></div></header>
+{% include "_axial_nav.html" %}
+<div class="axial-summary-grid">
+	<article><span>مقوله‌ها</span><strong>{{ analysis.categories|length }}</strong></article>
+	<article><span>زیرمقوله‌ها</span><strong>{{ subcategory_count }}</strong></article>
+	<article><span>روابط</span><strong>{{ analysis.relationships|length }}</strong></article>
+	<article><span>پدیده محوری</span><strong>{% if analysis.central_phenomenon %}تعیین‌شده{% else %}نامشخص{% endif %}</strong></article>
+	<article><span>نیازمند بازبینی</span><strong>{{ quality.open_count }}</strong></article>
+</div>
+<details class="axial-quality">
+	<summary>کنترل کیفیت Python · {{ quality.status }} · {{ quality.issue_count }} مورد</summary>
+	<div class="axial-quality-body">
+	<div class="dashboard-section-heading"><div><p class="eyebrow">کنترل کیفیت Python</p><h2>گزارش سازگاری و ردیابی</h2></div><span class="status-pill">{{ quality.status }} · {{ quality.issue_count }} مورد</span></div>
+	<div class="analysis-change-history">
+	{% for group in quality.groups %}
+		<section>
+			<h3>{{ group.title }} ({{ group.findings|length }})</h3>
+			{% for issue in group.findings %}
+			<article><span>{{ issue.issue_id }} · {{ issue.location }}</span><strong>{{ issue.type }} · {{ issue.severity }}</strong><p>{{ issue.description }}</p><small>اقدام پیشنهادی: {{ issue.suggested_action }}</small><small>وضعیت: {{ issue.resolution_status }}</small></article>
+			<form method="post" action="/results/{{ project.project_id }}/axial-coding/final/resolve" class="form-inline">
+				<input type="hidden" name="issue_id" value="{{ issue.issue_id }}">
+				<label>وضعیت رفع<select name="status"><option>باز</option><option>در حال رفع</option><option>حل‌شده</option><option>ردشده و بایگانی‌شده</option></select></label>
+				<label>یادداشت<input name="note" value="{{ issue.resolution_note }}"></label>
+				<button class="button button-secondary" type="submit">ثبت وضعیت مورد</button>
+			</form>
+			{% else %}<p class="muted">موردی در این گروه نیست.</p>{% endfor %}
+		</section>
+	{% endfor %}
+	</div>
+</div>
+</details>
+{% set export_base = export_base %}
+<section class="panel"><h2>مدیریت نمایش جدول جامع</h2>
+	<div class="form-inline">
+		<label>جست‌وجو در جدول<input id="axial-table-search" type="search" placeholder="شناسه، مقوله، مفهوم یا شاهد"></label>
+		<label>گروه‌بندی ستون‌ها
+			<select id="axial-table-filter"><option value="">همه مقادیر</option></select>
+		</label>
+	</div>
+	<div class="form-inline" id="axial-column-picker" aria-label="انتخاب ستون‌های جدول">
+		<label><input type="checkbox" value="0" checked> جایگاه / تم</label>
+		<label><input type="checkbox" value="1" checked> مقوله محوری</label>
+		<label><input type="checkbox" value="2" checked> مفاهیم و کدها</label>
+		<label><input type="checkbox" value="3" checked> شناسه / شاهد</label>
+	</div>
+</section>
+{% include "_coding_table.html" %}
+<section class="panel">
+	<h2>تاریخچه تغییرات ساختاری</h2>
+	<div class="analysis-change-history">
+	{% for item in state.change_history|reverse %}
+	<article><span>{{ item.record_type }} · {{ item.record_id }} · {{ item.field }}</span><strong>{{ item.old_value if item.old_value is not none else 'ثبت نشده' }} ← {{ item.new_value if item.new_value is not none else 'ثبت نشده' }}</strong><small>{{ item.changed_at }} · {{ item.actor }}{% if item.reason %} · {{ item.reason }}{% endif %}</small></article>
+	{% else %}<p class="muted">تغییر ساختاری جدیدی ثبت نشده است.</p>{% endfor %}
+	</div>
+</section>
+<footer class="axial-savebar">
+	<a class="button button-secondary" href="/results/{{ project.project_id }}/axial-coding">بازگشت به داشبورد</a>
+	<a class="button button-secondary" href="/results/{{ project.project_id }}/axial-coding/phenomenon">گام قبل</a>
+	<span class="axial-save-status">ذخیره شد</span>
+	<a class="button button-primary" href="/results/{{ project.project_id }}/axial-coding">ذخیره و بازگشت به داشبورد</a>
+</footer>
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+(function () {
+	const table = document.querySelector('.coding-table');
+	const search = document.getElementById('axial-table-search');
+	const filter = document.getElementById('axial-table-filter');
+	if (!table || !search || !filter) return;
+	const rows = Array.from(table.querySelectorAll('tbody tr'));
+	const values = Array.from(new Set(rows.map(row => row.cells[0]?.textContent.trim()).filter(Boolean))).sort();
+	values.forEach(value => filter.add(new Option(value, value)));
+	function apply() {
+		const query = search.value.trim();
+		const selected = filter.value;
+		rows.forEach(row => {
+			const text = row.textContent.replace(/\s+/g, ' ');
+			const matchesQuery = !query || text.includes(query);
+			const matchesFilter = !selected || row.textContent.includes(selected);
+			row.hidden = !(matchesQuery && matchesFilter);
+		});
+	}
+	search.addEventListener('input', apply);
+	filter.addEventListener('change', apply);
+	document.querySelectorAll('#axial-column-picker input[type="checkbox"]').forEach(checkbox => {
+		checkbox.addEventListener('change', () => {
+			const column = Number(checkbox.value);
+			Array.from(table.rows).forEach(row => {
+				const cell = row.cells[column];
+				if (cell) cell.hidden = !checkbox.checked;
+			});
+		});
+	});
+	Array.from(table.querySelectorAll('thead th')).forEach((header, columnIndex) => {
+		header.style.cursor = 'pointer';
+		header.addEventListener('click', () => {
+			const body = table.tBodies[0];
+			const visibleRows = Array.from(body.rows);
+			const ascending = header.dataset.sort !== 'asc';
+			visibleRows.sort((a, b) => {
+				const left = (a.cells[columnIndex] || {}).textContent || '';
+				const right = (b.cells[columnIndex] || {}).textContent || '';
+				return ascending ? left.localeCompare(right, 'fa') : right.localeCompare(left, 'fa');
+			}).forEach(row => body.appendChild(row));
+			header.dataset.sort = ascending ? 'asc' : 'desc';
+		});
+	});
+})();
+</script>
+{% endblock %}
